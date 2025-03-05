@@ -1,0 +1,296 @@
+DistributedDataParallel(
+  (module): TransformerSeq(
+    (in_emb): Embedding(267735, 352)
+    (out_emb): Linear(in_features=352, out_features=267735, bias=True)
+    (layers): ModuleList(
+      (0): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (smoe): CustomizedMoEPositionwiseFFMoM(
+          (gate): CustomNaiveGate_Balance_SMoE(
+            (gate): Linear(in_features=352, out_features=16, bias=True)
+          )
+          (experts): _Expert(
+            (htoh4): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (h4toh): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (activation): Sequential(
+              (0): ReLU()
+              (1): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (layer_norm): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (1): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (ff): FeedForwardLayer(
+          (fc1): Linear(in_features=352, out_features=352, bias=True)
+          (fc2): Linear(in_features=352, out_features=352, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (2): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (smoe): CustomizedMoEPositionwiseFFMoM(
+          (gate): CustomNaiveGate_Balance_SMoE(
+            (gate): Linear(in_features=352, out_features=16, bias=True)
+          )
+          (experts): _Expert(
+            (htoh4): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (h4toh): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (activation): Sequential(
+              (0): ReLU()
+              (1): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (layer_norm): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (3): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (ff): FeedForwardLayer(
+          (fc1): Linear(in_features=352, out_features=352, bias=True)
+          (fc2): Linear(in_features=352, out_features=352, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (4): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (smoe): CustomizedMoEPositionwiseFFMoM(
+          (gate): CustomNaiveGate_Balance_SMoE(
+            (gate): Linear(in_features=352, out_features=16, bias=True)
+          )
+          (experts): _Expert(
+            (htoh4): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (h4toh): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (activation): Sequential(
+              (0): ReLU()
+              (1): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (layer_norm): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (5): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (ff): FeedForwardLayer(
+          (fc1): Linear(in_features=352, out_features=352, bias=True)
+          (fc2): Linear(in_features=352, out_features=352, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (6): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (smoe): CustomizedMoEPositionwiseFFMoM(
+          (gate): CustomNaiveGate_Balance_SMoE(
+            (gate): Linear(in_features=352, out_features=16, bias=True)
+          )
+          (experts): _Expert(
+            (htoh4): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (h4toh): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (activation): Sequential(
+              (0): ReLU()
+              (1): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (layer_norm): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (7): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (ff): FeedForwardLayer(
+          (fc1): Linear(in_features=352, out_features=352, bias=True)
+          (fc2): Linear(in_features=352, out_features=352, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (8): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (smoe): CustomizedMoEPositionwiseFFMoM(
+          (gate): CustomNaiveGate_Balance_SMoE(
+            (gate): Linear(in_features=352, out_features=16, bias=True)
+          )
+          (experts): _Expert(
+            (htoh4): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (h4toh): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (activation): Sequential(
+              (0): ReLU()
+              (1): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (layer_norm): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (9): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (ff): FeedForwardLayer(
+          (fc1): Linear(in_features=352, out_features=352, bias=True)
+          (fc2): Linear(in_features=352, out_features=352, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (10): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (smoe): CustomizedMoEPositionwiseFFMoM(
+          (gate): CustomNaiveGate_Balance_SMoE(
+            (gate): Linear(in_features=352, out_features=16, bias=True)
+          )
+          (experts): _Expert(
+            (htoh4): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (h4toh): FMoELinear(num_expert=16, in_features=352,         out_features=352, bias=True, rank=0)
+            (activation): Sequential(
+              (0): ReLU()
+              (1): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (layer_norm): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+      (11): TransformerSeqLayer(
+        (attn): MultiHeadSeqAttention(
+          (attn): SeqAttention(
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (proj_query): Linear(in_features=352, out_features=352, bias=False)
+          (proj_out): Linear(in_features=352, out_features=352, bias=False)
+          (proj_val): Linear(in_features=352, out_features=352, bias=False)
+          (proj_key): Linear(in_features=352, out_features=352, bias=False)
+        )
+        (ff): FeedForwardLayer(
+          (fc1): Linear(in_features=352, out_features=352, bias=True)
+          (fc2): Linear(in_features=352, out_features=352, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+        )
+        (norm1): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+        (norm3): LayerNorm((352,), eps=1e-05, elementwise_affine=True)
+      )
+    )
+  )
+)
