@@ -27,7 +27,26 @@ from networkx.algorithms.community import kernighan_lin_bisection
 import multiprocessing
 """for causal map end """
 
-def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims,):
+def block_average_pooling(x, block_size=4):
+    """
+    对输入张量进行分块平均池化
+    :param x: 输入张量，shape为(256, 256)
+    :param block_size: 分块大小，默认为4
+    :return: 输出张量，shape为(64, 64)
+    """
+    # 将输入张量转换为4D张量 (batch_size=1, channels=1, height, width)
+    x = x.unsqueeze(0).unsqueeze(0)
+
+    # 使用unfold操作将张量分块
+    unfolded = x.unfold(2, block_size, block_size).unfold(3, block_size, block_size)
+
+    # 计算每个块的平均值
+    pooled = unfolded.mean(dim=(-1, -2))
+
+    # 去掉batch和channel维度
+    return pooled.squeeze(0).squeeze(0)
+
+def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims):
     """
     将给定邻接矩阵表示的图划分为固定数量且节点数量尽量相同的子图。
 
@@ -38,6 +57,7 @@ def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims,
     返回:
     list: 划分后的子图列表，每个子图是一个networkx图对象
     """
+    adj_matrix=block_average_pooling(adj_matrix)
     # 创建初始图
     nodes_of_interest = {i for i in range(adj_matrix.shape[0])}
     cov_matrix = np.matmul(adj_matrix, adj_matrix.transpose(0, 1))  # COV = A @ transpose(A)
@@ -46,48 +66,23 @@ def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims,
     percentile_70_value = np.percentile(flattened_arr, 70)
     explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=percentile_70_value,
                        explanation_tester=None, nodes_set=nodes_of_interest)
-    learn_matrix = explainer.learn_graph().get_skeleton_mat()
-    G = nx.from_numpy_array(learn_matrix)
-
-    # 存储划分后的子图
-    subgraphs = [G]
-    while len(subgraphs) < num_subgraphs:
-        new_subgraphs = []
-        for subgraph in subgraphs:
-            if subgraph.number_of_nodes() <= 1:
-                new_subgraphs.extend([subgraph])
-                continue
-            # 使用kernighan_lin_bisection进行二分图划分，尽量均匀地划分
-            part1, part2 = kernighan_lin_bisection(subgraph)
-            subgraph1 = subgraph.subgraph(part1)
-            subgraph2 = subgraph.subgraph(part2)
-            new_subgraphs.extend([subgraph1, subgraph2])
-        subgraphs = new_subgraphs
-
-    # 如果划分后子图数量超过期望数量，合并一些子图使数量符合要求且尽量均衡节点数量
-    while len(subgraphs) > num_subgraphs:
-        # 找到节点数量最少和次少的两个子图
-        sorted_subgraphs = sorted(subgraphs, key=lambda x: x.number_of_nodes())
-        min_subgraph1 = sorted_subgraphs[0]
-        min_subgraph2 = sorted_subgraphs[1]
-        combined_subgraph = nx.compose(min_subgraph1, min_subgraph2)
-        subgraphs.remove(min_subgraph1)
-        subgraphs.remove(min_subgraph2)
-        subgraphs.append(combined_subgraph)
     ret=[]
-    for i, subgraph in enumerate(subgraphs):
-        subgraph=list(subgraph.nodes())
-        ret.append(subgraph)
+    for i in range(0,adj_matrix.shape[0],4):
+        explain_ret=explainer.explain(target_node_idx=i)[0]
+        tmp_ret.append(i*4)
+        tmp_ret.append(i*4+1)
+        tmp_ret.append(i*4+2)
+        tmp_ret.append(i*4+3)
+        for j in explain_ret:
+            tmp_ret.append(j*4)
+            tmp_ret.append(j*4+1)
+            tmp_ret.append(j*4+2)
+            tmp_ret.append(j*4+3)
+        ret.append(tmp_ret)
     return ret
 
-def cal_expert(attn_weights, num_subgraphs, hidden_dims):
-    batch_size=int(attn_weights.shape[0])
-    graph_tensor=[]
-    for i in range(batch_size):
-        graph_tensor.append((attn_weights[i],num_subgraphs,hidden_dims))
-    with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
-        rets= pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-    return rets
+
+
 
 
 def mark_module_parallel_comm(module, comm):
@@ -276,7 +271,7 @@ class FMoE(nn.Module):
             num_subgraphs=4
             attn_weights=torch.mean(attn_weights, dim=0)
             graph_tensor=[]
-            splitsize=32
+            splitsize=8
             blsize=int(attn_weights.shape[0]/splitsize)
             for add_index in range(splitsize):
                 graph_tensor.append((attn_weights[add_index*blsize:add_index*blsize+blsize,add_index*blsize:add_index*blsize+blsize], num_subgraphs, moe_inp.shape[-1]))
