@@ -68,7 +68,8 @@ def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims)
                        explanation_tester=None, nodes_set=nodes_of_interest)
     ret=[]
     for i in range(0,adj_matrix.shape[0],4):
-        explain_ret=explainer.explain(target_node_idx=i)[0]
+        tmp_ret=[]
+        explain_ret=explainer.explain(target_node_idx=i)[0][0]
         tmp_ret.append(i*4)
         tmp_ret.append(i*4+1)
         tmp_ret.append(i*4+2)
