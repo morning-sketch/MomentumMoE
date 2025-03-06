@@ -276,8 +276,8 @@ class FMoE(nn.Module):
             num_subgraphs=4
             attn_weights=torch.mean(attn_weights, dim=0)
             graph_tensor=[]
-            blsize=int(attn_weights.shape[0]/32)
             splitsize=32
+            blsize=int(attn_weights.shape[0]/splitsize)
             for add_index in range(splitsize):
                 graph_tensor.append((attn_weights[add_index*blsize:add_index*blsize+blsize,add_index*blsize:add_index*blsize+blsize], num_subgraphs, moe_inp.shape[-1]))
             with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
