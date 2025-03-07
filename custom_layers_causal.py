@@ -46,7 +46,7 @@ def block_average_pooling(x, block_size=4):
     # 去掉batch和channel维度
     return pooled.squeeze(0).squeeze(0)
 
-def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims):
+def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     """
     将给定邻接矩阵表示的图划分为固定数量且节点数量尽量相同的子图。
 
@@ -63,18 +63,21 @@ def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims)
     cov_matrix = np.matmul(adj_matrix, adj_matrix.transpose(0, 1))  # COV = A @ transpose(A)
     corr_mat = cov_to_corr(cov_matrix)
     flattened_arr = corr_mat.numpy().ravel()
-    percentile_70_value = np.percentile(flattened_arr, 70)
+    percentile_70_value = np.percentile(flattened_arr, 90)
     explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=percentile_70_value,
                        explanation_tester=None, nodes_set=nodes_of_interest)
     ret=[]
     for i in range(0,adj_matrix.shape[0],4):
         tmp_ret=[]
-        explain_ret=explainer.explain(target_node_idx=i)[0][0]
+        explain_ret=explainer.explain(target_node_idx=i,max_range=1)
+        if explain_ret[0][1]==adj_matrix.shape[0]/4-1:
+            ret.append(tmp_ret)
+            continue
         tmp_ret.append(i*4)
         tmp_ret.append(i*4+1)
         tmp_ret.append(i*4+2)
         tmp_ret.append(i*4+3)
-        for j in explain_ret:
+        for j in explain_ret[0][0]:
             tmp_ret.append(j*4)
             tmp_ret.append(j*4+1)
             tmp_ret.append(j*4+2)
@@ -264,28 +267,32 @@ class FMoE(nn.Module):
         according to the gate.  The score of the selected gate given by the
         expert is multiplied to the experts' output tensors as a weight.
         """
-
-        """start causal mapping"""
-        moe_causal_inp=moe_inp.clone()
-        with torch.no_grad():
-            attn_weights=attn_weights.cpu()
-            num_subgraphs=4
-            attn_weights=torch.mean(attn_weights, dim=0)
-            graph_tensor=[]
-            splitsize=8
-            blsize=int(attn_weights.shape[0]/splitsize)
-            for add_index in range(splitsize):
-                graph_tensor.append((attn_weights[add_index*blsize:add_index*blsize+blsize,add_index*blsize:add_index*blsize+blsize], num_subgraphs, moe_inp.shape[-1]))
-            with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
-                rets= pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-            for add_index in range(splitsize):
-                for j in range(len(rets[add_index])):
-                    for k in range(1, len(rets[add_index][j])):
-                        moe_causal_inp[rets[add_index][j][0]+blsize*add_index] += moe_causal_inp[rets[add_index][j][k]+blsize*add_index]
-                    moe_causal_inp[rets[add_index][j][0] + blsize * add_index]/=len(rets[add_index][j])
-                    for k in range(1, len(rets[add_index][j])):
-                        moe_causal_inp[rets[add_index][j][k] + blsize * add_index] = moe_causal_inp[rets[add_index][j][0] + blsize * add_index]
-        """end causal mapping"""
+        moe_causal_inp = moe_inp.clone()
+        attn_weights = attn_weights.cpu()
+        attn_weights = torch.mean(attn_weights, dim=0)
+        if torch.max(attn_weights)-torch.min(attn_weights)>=0.01:
+            """start causal mapping"""
+            with torch.no_grad():
+                graph_tensor = []
+                splitsize = 8
+                blsize = int(attn_weights.shape[0] / splitsize)
+                for add_index in range(splitsize):
+                    graph_tensor.append((attn_weights[add_index * blsize:add_index * blsize + blsize,
+                                         add_index * blsize:add_index * blsize + blsize],
+                                         moe_inp.shape[-1]))
+                with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
+                    rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
+                for add_index in range(splitsize):
+                    for j in range(len(rets[add_index])):
+                        for k in range(1, len(rets[add_index][j])):
+                            moe_causal_inp[rets[add_index][j][0] + blsize * add_index] += moe_causal_inp[
+                                rets[add_index][j][k] + blsize * add_index]
+                        if len(rets[add_index][j]) > 1:
+                            moe_causal_inp[rets[add_index][j][0] + blsize * add_index] /= len(rets[add_index][j])
+                        for k in range(1, len(rets[add_index][j])):
+                            moe_causal_inp[rets[add_index][j][k] + blsize * add_index] = moe_causal_inp[
+                                rets[add_index][j][0] + blsize * add_index]
+            """end causal mapping"""
 
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)

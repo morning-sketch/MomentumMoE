@@ -123,7 +123,6 @@ class LearnStructICD(LearnStructBase):
                 self.graph.maximally_orient_pattern(rules_set=[5, 6, 7])  # when selection-bias may be present
             if self.is_tail_completeness:
                 self.graph.maximally_orient_pattern(rules_set=[8, 9, 10])  # for tail-completeness
-        done=True
         return done
 
     def _learn_struct_base_step_0(self):
@@ -185,7 +184,6 @@ class LearnStructICD(LearnStructBase):
             self.graph.maximally_orient_pattern(rules_set=[5, 6, 7])  # when selection-bias may be present
         if self.is_tail_completeness:
             self.graph.maximally_orient_pattern(rules_set=[8, 9, 10])  # for tail-completeness
-        done = True
         return done
 
     def _get_pdsep_range_sets(self, node_i, node_j, cond_set_size):
