@@ -70,14 +70,11 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     for i in range(0,adj_matrix.shape[0],4):
         tmp_ret=[]
         explain_ret=explainer.explain(target_node_idx=i,max_range=1)
-        if explain_ret[0][1]==adj_matrix.shape[0]/4-1:
-            ret.append(tmp_ret)
-            continue
         tmp_ret.append(i*4)
         tmp_ret.append(i*4+1)
         tmp_ret.append(i*4+2)
         tmp_ret.append(i*4+3)
-        for j in explain_ret[0][0]:
+        for j in explain_ret[0]:
             tmp_ret.append(j*4)
             tmp_ret.append(j*4+1)
             tmp_ret.append(j*4+2)
