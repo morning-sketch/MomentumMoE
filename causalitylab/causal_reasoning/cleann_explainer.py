@@ -85,7 +85,11 @@ class CLEANN:
         sets_list.sort(key=lambda x: x[1])
         if len(sets_list) > 0:
             explanations_list.append(sets_list[0])
-
+        # for possibel_explanation in sets_list:
+        #     if 0 in possibel_explanation or 3 in possibel_explanation:
+        #         continue
+        #     explanations_list.append(possibel_explanation)
+        #     break
         results['explanations'] = explanations_list
         self.results[target_node_idx] = results
         return explanations_list
