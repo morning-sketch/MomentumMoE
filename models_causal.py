@@ -132,6 +132,8 @@ class MultiHeadSeqAttention(nn.Module):
         out = out.transpose(1, 2).contiguous()  # B x M x K x D
         out = out.view(B, M, -1)  # B x M x K_D
         out = self.proj_out(out)
+        att_weight = att_weight.view(B, K, M, M)  # B x K x M x M
+        att_weight = att_weight.mean(dim=1)  # B x M x M
         return out,att_weight
 
 class MultiHeadSeqSymAttention(nn.Module):
