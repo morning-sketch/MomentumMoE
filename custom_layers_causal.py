@@ -269,15 +269,20 @@ class FMoE(nn.Module):
         """
         moe_causal_inp = moe_inp.clone()
         attn_weights = attn_weights.cpu()
-        attn_weights = torch.mean(attn_weights, dim=0)
+        target_shape=(attn_weights.shape[0]*attn_weights.shape[1],attn_weights.shape[0]*attn_weights.shape[1])
+        target_attn_weights=torch.zeros(target_shape)
+        for i in range(attn_weights.shape[0]):
+            for j in range(attn_weights.shape[1]):
+                for k in range(attn_weights.shape[2]):
+                    target_attn_weights[i * 256 + j, i * 256 + k] = attn_weights[i, j, k]
         if torch.max(attn_weights)-torch.min(attn_weights)>=0.01:
             """start causal mapping"""
             with torch.no_grad():
                 graph_tensor = []
-                splitsize = 8
-                blsize = int(attn_weights.shape[0] / splitsize)
+                splitsize = 8*6
+                blsize = int(target_attn_weights.shape[0] / splitsize)
                 for add_index in range(splitsize):
-                    graph_tensor.append((attn_weights[add_index * blsize:add_index * blsize + blsize,
+                    graph_tensor.append((target_attn_weights[add_index * blsize:add_index * blsize + blsize,
                                          add_index * blsize:add_index * blsize + blsize],
                                          moe_inp.shape[-1]))
                 with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
