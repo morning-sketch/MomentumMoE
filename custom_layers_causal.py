@@ -215,10 +215,12 @@ class FMoE(nn.Module):
         self.top_k = moe_top_k
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
+            self.share_expert=nn.ModuleList([e(d_model) for e in expert[0:2]])
             self.experts_fused = False
             self.num_expert = num_expert = len(expert)
         elif expert is not None:
             self.experts = nn.ModuleList([expert(d_model) for _ in range(num_expert)])
+            self.share_expert=nn.ModuleList([expert(d_model) for _ in range(2)])
             self.experts_fused = False
         else:
             self.experts_fused = True
@@ -268,29 +270,6 @@ class FMoE(nn.Module):
         according to the gate.  The score of the selected gate given by the
         expert is multiplied to the experts' output tensors as a weight.
         """
-
-        """start causal mapping"""
-        moe_causal_inp=moe_inp.clone()
-        with torch.no_grad():
-            attn_weights=attn_weights.cpu()
-            num_subgraphs=4
-            attn_weights=torch.mean(attn_weights, dim=0)
-            graph_tensor=[]
-            splitsize=32
-            blsize=int(attn_weights.shape[0]/splitsize)
-            for add_index in range(splitsize):
-                graph_tensor.append((attn_weights[add_index*blsize:add_index*blsize+blsize,add_index*blsize:add_index*blsize+blsize], num_subgraphs, moe_inp.shape[-1]))
-            with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
-                rets= pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-            for add_index in range(splitsize):
-                for j in range(len(rets[add_index])):
-                    for k in range(1, len(rets[add_index][j])):
-                        moe_causal_inp[rets[add_index][j][0]+blsize*add_index] += moe_causal_inp[rets[add_index][j][k]+blsize*add_index]
-                    moe_causal_inp[rets[add_index][j][0] + blsize * add_index]/=len(rets[add_index][j])
-                    for k in range(1, len(rets[add_index][j])):
-                        moe_causal_inp[rets[add_index][j][k] + blsize * add_index] = moe_causal_inp[rets[add_index][j][0] + blsize * add_index]
-        """end causal mapping"""
-
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)
         )
@@ -391,6 +370,19 @@ class FMoE(nn.Module):
                 )
 
             moe_outp = tree.map_structure(all_gather_func, moe_outp)
+
+        """start causal mapping"""
+        moe_causal_inp=moe_inp.clone()
+        with torch.no_grad():
+            attn_weights=attn_weights.cpu()
+            attn_weights=torch.mean(attn_weights, dim=0)
+            graph_tensor=[]
+            splitsize=32
+
+            blsize=int(attn_weights.shape[0]/splitsize)
+            for add_index in range(splitsize):
+                graph_tensor.append((attn_weights[add_index*blsize:add_index*blsize+blsize,add_index*blsize:add_index*blsize+blsize], num_subgraphs, moe_inp.shape[-1]))
+        """end causal mapping"""
 
         moe_outp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_outp)
