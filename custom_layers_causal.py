@@ -28,12 +28,6 @@ import multiprocessing
 """for causal map end """
 
 def block_average_pooling(x, block_size=32):
-    """
-    对输入张量进行分块平均池化
-    :param x: 输入张量，shape为(256, 256)
-    :param block_size: 分块大小，默认为4
-    :return: 输出张量，shape为(64, 64)
-    """
     # 将输入张量转换为4D张量 (batch_size=1, channels=1, height, width)
     x = x.unsqueeze(0).unsqueeze(0)
 
@@ -57,7 +51,8 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     返回:
     list: 划分后的子图列表，每个子图是一个networkx图对象
     """
-    adj_matrix=block_average_pooling(adj_matrix)
+    block_size = 32
+    adj_matrix=block_average_pooling(adj_matrix,block_size=block_size)
     # 创建初始图
     nodes_of_interest = {i for i in range(adj_matrix.shape[0])}
     cov_matrix = np.matmul(adj_matrix, adj_matrix.transpose(0, 1))  # COV = A @ transpose(A)
@@ -67,24 +62,20 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=percentile_70_value,
                        explanation_tester=None, nodes_set=nodes_of_interest)
     ret=[]
-    for i in range(0,adj_matrix.shape[0],4):
-        tmp_ret=[]
-        explain_ret=explainer.explain(target_node_idx=i,max_range=1)
-        if len(explain_ret[0][1])>=adj_matrix.shape[0]/2:
-            ret.append(tmp_ret)
-            continue
-        tmp_ret.append(i*4)
-        tmp_ret.append(i*4+1)
-        tmp_ret.append(i*4+2)
-        tmp_ret.append(i*4+3)
+    row_means=adj_matrix.mean(dim=1)
+    max_mean_row_index=torch.argmax(row_means)
+    explain_ret = explainer.explain(target_node_idx=max_mean_row_index, max_range=1)
+    if len(explain_ret[0][0])!=0:
+        ret.append(get_real_index(max_mean_row_index,block_size))
         for j in explain_ret[0][0]:
-            tmp_ret.append(j*4)
-            tmp_ret.append(j*4+1)
-            tmp_ret.append(j*4+2)
-            tmp_ret.append(j*4+3)
-        ret.append(tmp_ret)
+            ret[-1]=tmp_ret[-1]+get_real_index(j,block_size)
     return ret
 
+def get_real_index(index,block_size):
+    real_index=[]
+    for i in block_size
+        real_index.append(index*block_size+i)
+    return real_index
 
 def mark_module_parallel_comm(module, comm):
     r"""
@@ -209,6 +200,7 @@ class FMoE(nn.Module):
             self.slice_rank = self.slice_group.rank()
 
         self.top_k = moe_top_k
+        self.share_expert_num = 2
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
             self.share_expert=nn.ModuleList([e(d_model) for e in expert[0:2]])
@@ -221,7 +213,7 @@ class FMoE(nn.Module):
         else:
             self.experts_fused = True
 
-        self.gate = gate(d_model, num_expert, world_size, moe_top_k)
+        self.gate = gate(d_model, num_expert-self.share_expert_num, world_size, moe_top_k-1)
         self.gate_hook = gate_hook
         self.mask = mask
         self.mask_dict = mask_dict
@@ -266,6 +258,25 @@ class FMoE(nn.Module):
         according to the gate.  The score of the selected gate given by the
         expert is multiplied to the experts' output tensors as a weight.
         """
+        if torch.max(attn_weights) - torch.min(attn_weights) >= 0.01:
+            """start causal mapping"""
+            with torch.no_grad():
+                graph_tensor = []
+                blsize = 128
+                splitnum = int(attn_weights.shape[1] / blsize)
+                for f_index in range(attn_weights.shape[0]):
+                    for add_index in range(splitnum):
+                        splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
+                        graph_tensor.append((attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
+                with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
+                    rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
+
+                share_expert_k_list = torch.full((256, 1),15)
+                for add_index in range(splitnum * attn_weights.shape[0]):
+                    for j in range(len(rets[add_index])):
+                        for k in range(0, len(rets[add_index][j])):
+                            share_expert_k_list[rets[add_index][j][k]] = 14
+            """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)
         )
@@ -290,7 +301,8 @@ class FMoE(nn.Module):
 
 
         gate_top_k_idx, gate_score = self.gate(moe_inp)
-
+        gate_top_k_idx = gate_top_k_idx.cat(share_expert_k_list, dim=1)
+        gate_score=torch.full((gate_top_k_idx.shape[0],self.top_k+1),0.5)
         if hasattr(self.gate, "dynamic_top_k"):
             self.top_k = self.gate.dynamic_top_k
 
@@ -366,15 +378,6 @@ class FMoE(nn.Module):
                 )
 
             moe_outp = tree.map_structure(all_gather_func, moe_outp)
-
-        """start causal mapping"""
-        moe_causal_inp=moe_inp.clone()
-        with torch.no_grad():
-            attn_weights=attn_weights.cpu()
-            ret=split_graph_into_equal_size_subgraphs(attn_weights,self.d_model)
-
-
-        """end causal mapping"""
 
         moe_outp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_outp)
