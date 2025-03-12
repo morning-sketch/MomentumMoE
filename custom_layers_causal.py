@@ -274,7 +274,7 @@ class FMoE(nn.Module):
             with torch.no_grad():
                 graph_tensor = []
                 blsize = 32
-                splitnum = attn_weights.shape[1]/blsize
+                splitnum = int(attn_weights.shape[1]/blsize)
                 for f_index in range(attn_weights.shape[0]):
                     for add_index in range(splitnum):
                         graph_tensor.append((attn_weights[f_index][add_index * blsize:add_index * blsize + blsize,
@@ -282,7 +282,7 @@ class FMoE(nn.Module):
                                              moe_inp.shape[-1]))
                 with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
                     rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-                for add_index in range(splitnum):
+                for add_index in range(splitnum*attn_weights.shape[0]):
                     for j in range(len(rets[add_index])):
                         for k in range(1, len(rets[add_index][j])):
                             moe_causal_inp[rets[add_index][j][0] + blsize * add_index] += moe_causal_inp[
