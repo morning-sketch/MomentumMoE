@@ -73,7 +73,7 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
 
 def get_real_index(index,block_size):
     real_index=[]
-    for i in block_size
+    for i in block_size:
         real_index.append(index*block_size+i)
     return real_index
 
