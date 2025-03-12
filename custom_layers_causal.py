@@ -269,25 +269,20 @@ class FMoE(nn.Module):
         """
         moe_causal_inp = moe_inp.clone()
         attn_weights = attn_weights.cpu()
-        target_shape=(attn_weights.shape[0]*attn_weights.shape[1],attn_weights.shape[0]*attn_weights.shape[1])
-        target_attn_weights=torch.zeros(target_shape)
-        for i in range(attn_weights.shape[0]):
-            for j in range(attn_weights.shape[1]):
-                for k in range(attn_weights.shape[2]):
-                    target_attn_weights[i * 256 + j, i * 256 + k] = attn_weights[i, j, k]
         if torch.max(attn_weights)-torch.min(attn_weights)>=0.01:
             """start causal mapping"""
             with torch.no_grad():
                 graph_tensor = []
-                splitsize = 8*6
-                blsize = int(target_attn_weights.shape[0] / splitsize)
-                for add_index in range(splitsize):
-                    graph_tensor.append((target_attn_weights[add_index * blsize:add_index * blsize + blsize,
-                                         add_index * blsize:add_index * blsize + blsize],
-                                         moe_inp.shape[-1]))
+                blsize = 32
+                splitnum = attn_weights.shape[1]/blsize
+                for f_index in range(attn_weights.shape[0]):
+                    for add_index in range(splitnum):
+                        graph_tensor.append((attn_weights[f_index][add_index * blsize:add_index * blsize + blsize,
+                                             add_index * blsize:add_index * blsize + blsize],
+                                             moe_inp.shape[-1]))
                 with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
                     rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-                for add_index in range(splitsize):
+                for add_index in range(splitnum):
                     for j in range(len(rets[add_index])):
                         for k in range(1, len(rets[add_index][j])):
                             moe_causal_inp[rets[add_index][j][0] + blsize * add_index] += moe_causal_inp[
