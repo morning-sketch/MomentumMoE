@@ -289,7 +289,7 @@ class FMoE(nn.Module):
             moe_inp = tree.map_structure(slice_func, moe_inp)
 
 
-        gate_top_k_idx, gate_score = self.gate(moe_causal_inp)
+        gate_top_k_idx, gate_score = self.gate(moe_inp)
 
         if hasattr(self.gate, "dynamic_top_k"):
             self.top_k = self.gate.dynamic_top_k
@@ -371,7 +371,6 @@ class FMoE(nn.Module):
         moe_causal_inp=moe_inp.clone()
         with torch.no_grad():
             attn_weights=attn_weights.cpu()
-            attn_weights=torch.mean(attn_weights, dim=0)
             ret=split_graph_into_equal_size_subgraphs(attn_weights,self.d_model)
 
 
