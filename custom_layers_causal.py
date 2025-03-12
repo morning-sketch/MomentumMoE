@@ -27,7 +27,7 @@ from networkx.algorithms.community import kernighan_lin_bisection
 import multiprocessing
 """for causal map end """
 
-def block_average_pooling(x, block_size=4):
+def block_average_pooling(x, block_size=16):
     """
     对输入张量进行分块平均池化
     :param x: 输入张量，shape为(256, 256)
@@ -273,13 +273,12 @@ class FMoE(nn.Module):
             """start causal mapping"""
             with torch.no_grad():
                 graph_tensor = []
-                blsize = 32
+                blsize = 128
                 splitnum = int(attn_weights.shape[1]/blsize)
                 for f_index in range(attn_weights.shape[0]):
                     for add_index in range(splitnum):
-                        graph_tensor.append((attn_weights[f_index][add_index * blsize:add_index * blsize + blsize,
-                                             add_index * blsize:add_index * blsize + blsize],
-                                             moe_inp.shape[-1]))
+                        splite_slice=slice(add_index * blsize, add_index * blsize + blsize)
+                        graph_tensor.append((attn_weights[f_index][splite_slice,splite_slice],moe_inp.shape[-1]))
                 with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
                     rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
                 for add_index in range(splitnum*attn_weights.shape[0]):
