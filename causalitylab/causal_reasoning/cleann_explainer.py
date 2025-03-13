@@ -80,21 +80,12 @@ class CLEANN:
             max_size = max_set_size
 
         explanations_list = []
-        if self.is_explanation is None:
-            if len(full_explain_set) <= max_size:
-                explanations_list.append([full_explain_set, max_size])
-        else:
-            found_explanation = False
-            for set_size in range(1, max_size+1):
-                sets_list = pds_tree.get_subsets_list(set_nodes=full_explain_set, subset_size=set_size)
-                sets_list.sort(key=lambda x: x[1])  # sort with respect to the sum of minimal distances
-                for possible_explanation_set in sets_list:
-                    if self.is_explanation(list(possible_explanation_set[0]), target_node_idx):
-                        explanations_list.append(possible_explanation_set)
-                        found_explanation = True
-                if found_explanation and self._search_minimal:
-                    break
-
+        for set_size in range(2, int(max_size/2) + 1):
+            sets_list = pds_tree.get_subsets_list(set_nodes=full_explain_set, subset_size=set_size)
+            sets_list.sort(key=lambda x: x[1])  # sort with respect to the sum of minimal distances
+            for possible_explanation_set in sets_list:
+                explanations_list.append(possible_explanation_set)
+                break
         results['explanations'] = explanations_list
         self.results[target_node_idx] = results
         return explanations_list

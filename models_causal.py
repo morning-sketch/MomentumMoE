@@ -129,7 +129,7 @@ class MultiHeadSeqAttention(nn.Module):
 
         out, att_weight = self.attn(query, key, value, key_pe)  # B_K x M x D
         att_weight=att_weight.view(B, K, M, M)
-        att_weight=att_weight.dim(1)
+        att_weight=att_weight.mean(1)
         out = out.view(B, K, M, D)  # B x K x M x D
         out = out.transpose(1, 2).contiguous()  # B x M x K x D
         out = out.view(B, M, -1)  # B x M x K_D
