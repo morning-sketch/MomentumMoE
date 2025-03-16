@@ -55,21 +55,27 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     adj_matrix=block_average_pooling(adj_matrix,block_size=block_size)
     # 创建初始图
     nodes_of_interest = {i for i in range(adj_matrix.shape[0])}
-    cov_matrix = np.matmul(adj_matrix, adj_matrix.transpose(0, 1))  # COV = A @ transpose(A)
-    corr_mat = cov_to_corr(cov_matrix)
-    flattened_arr = corr_mat.numpy().ravel()
-    percentile_90_value = np.percentile(flattened_arr, 90)
-    explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=percentile_90_value,
+    explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=1e-2,
                        explanation_tester=None, nodes_set=nodes_of_interest)
     ret=[]
     row_means=adj_matrix.mean(dim=1)
     max_mean_row_index = torch.argmax(row_means).item()
-    explain_ret = explainer.explain(target_node_idx=max_mean_row_index, max_range=1)
+    explain_ret = explainer.explain(target_node_idx=max_mean_row_index)
     if len(explain_ret)!=0:
         ret.append(get_real_index(max_mean_row_index,block_size))
         for j in explain_ret[-1][0]:
             ret[-1]=ret[-1]+get_real_index(j,block_size)
     return ret
+
+def combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score):
+    gate_top_k_idx=gate_top_k_idx.clone()
+    gate_score=gate_score.clone()
+    for i in range(share_expert_k_list.shape[0]):
+        if share_expert_k_list[i][0] != 0:
+            gate_top_k_idx[i][-1] = share_expert_k_list[i][0]
+            gate_score[i][-1] = 0.5
+            gate_score[i][-2] = 0.5
+    return gate_top_k_idx,gate_score
 
 def get_real_index(index,block_size):
     real_index=[]
@@ -200,7 +206,7 @@ class FMoE(nn.Module):
             self.slice_rank = self.slice_group.rank()
 
         self.top_k = moe_top_k
-        self.share_expert_num = 2
+        self.share_expert_num = 1
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
             self.share_expert=nn.ModuleList([e(d_model) for e in expert[0:2]])
@@ -213,7 +219,7 @@ class FMoE(nn.Module):
         else:
             self.experts_fused = True
 
-        self.gate = gate(d_model, num_expert-self.share_expert_num, world_size, moe_top_k-1)
+        self.gate = gate(d_model, num_expert-self.share_expert_num, world_size, moe_top_k)
         self.gate_hook = gate_hook
         self.mask = mask
         self.mask_dict = mask_dict
@@ -271,11 +277,12 @@ class FMoE(nn.Module):
             with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
                 rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
 
-            share_expert_k_list = torch.full((moe_inp.shape[0], 1), 15)
+            # share_expert_k_list = torch.full((moe_inp.shape[0], 1), 15)
+            share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
             for add_index in range(splitnum * attn_weights.shape[0]):
                 for j in range(len(rets[add_index])):
                     for k in range(0, len(rets[add_index][j])):
-                        share_expert_k_list[rets[add_index][j][k]] = 14
+                        share_expert_k_list[rets[add_index][j][k]] = self.num_expert-1
             """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)
@@ -301,9 +308,8 @@ class FMoE(nn.Module):
 
 
         gate_top_k_idx, gate_score = self.gate(moe_inp)
-        share_expert_k_list=torch.tensor(share_expert_k_list).to(gate_top_k_idx.device)
-        gate_top_k_idx = torch.cat([gate_top_k_idx, share_expert_k_list], dim=1)
-        gate_score=torch.full((gate_top_k_idx.shape[0],self.top_k),0.5).to(gate_top_k_idx.device)
+        share_expert_k_list = torch.tensor(share_expert_k_list).to(gate_top_k_idx.device)
+        gate_top_k_idx,gate_score=combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score)
         if hasattr(self.gate, "dynamic_top_k"):
             self.top_k = self.gate.dynamic_top_k
 

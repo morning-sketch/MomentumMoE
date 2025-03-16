@@ -27,7 +27,6 @@ class CLEANN:
         # calculate correlation matrix from attention matrix
         cov_matrix = np.matmul(attention_matrix, attention_matrix.transpose(0,1))  # COV = A @ transpose(A)
         corr_mat = cov_to_corr(cov_matrix)
-
         # prepare for learning a graph
         num_vars, _ = corr_mat.shape  # number of graph-nodes
         if nodes_set is None:
