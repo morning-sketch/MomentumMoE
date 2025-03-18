@@ -306,7 +306,7 @@ class FMoE(nn.Module):
 
             moe_inp = tree.map_structure(slice_func, moe_inp)
 
-        share_expert_k_list = torch.tensor(share_expert_k_list).to(gate_top_k_idx.device)
+        share_expert_k_list = torch.tensor(share_expert_k_list).to(moe_inp.device)
         gate_top_k_idx, gate_score = self.gate(inp=moe_inp,share_expert_k_list=share_expert_k_list)
 
         # gate_top_k_idx,gate_score=combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score)
