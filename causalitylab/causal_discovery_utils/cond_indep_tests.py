@@ -6,7 +6,8 @@ from causal_discovery_utils.data_utils import calc_stats
 from causal_discovery_utils.data_utils import get_var_size
 from graphical_models import DAG, UndirectedGraph, PAG
 from scipy import stats
-
+import torch
+import itertools
 
 class CacheCI:
     """
@@ -290,60 +291,61 @@ class StatCondIndep:
     def is_edge_retained(self, x, y):
         return self.retained_graph.is_connected(x, y)
 
-
 class CondIndepParCorr(StatCondIndep):
     def __init__(self, threshold, dataset, weights=None, retained_edges=None, count_tests=False, use_cache=False,
-                 num_records=None, num_vars=None):
+                 num_records=None, num_vars=None,correlation_matrix=None):
         if weights is not None:
             raise Exception('weighted Partial-correlation is not supported. Please avoid using weights.')
         super().__init__(dataset, threshold, database_type=float, weights=weights, retained_edges=retained_edges,
                          count_tests=count_tests, use_cache=use_cache, num_records=num_records, num_vars=num_vars)
 
-        self.correlation_matrix = None
-        if self.data is not None:
-            self.correlation_matrix = np.corrcoef(self.data, rowvar=False)  # np.corrcoef(self.data.T)
-        self.data = None  # no need to store the data, as we have the correlation matrix
+        self.correlation_matrix = correlation_matrix
+        # 预计算逆矩阵缓存
+        self.inv_corr_cache = {}
+        max_zz_size = num_vars
+        for zz_size in range(1, max_zz_size):
+            for zz in itertools.combinations(range(num_vars), zz_size):
+                for x in range(num_vars):
+                    for y in range(x + 1, num_vars):
+                        if x not in zz and y not in zz:
+                            all_var_idx = (x, y) + zz
+                            corr_subset = self.correlation_matrix[all_var_idx][:, all_var_idx]
+                            self.inv_corr_cache[(x, y, zz)] = -torch.linalg.pinv(corr_subset)
 
     def calc_statistic(self, x, y, zz):
-        corr_coef = self.correlation_matrix  # for readability
-        if len(zz) == 0:
-            if corr_coef[x, y] >= 1.0:
-                return 0
+        """PyTorch版本的计算"""
+        corr = self.correlation_matrix
 
-            par_corr = corr_coef[x, y]
+        if len(zz) == 0:
+            par_corr = corr[x, y]
         elif len(zz) == 1:
             z = zz[0]
+            r_xy = corr[x, y]
+            r_xz = corr[x, z]
+            r_yz = corr[y, z]
+            denom = torch.sqrt((1 - r_xz ** 2) * (1 - r_yz ** 2))
+            par_corr = (r_xy - r_xz * r_yz) / denom
+        else:
+            cache_key = (x, y, zz)
+            if cache_key in self.inv_corr_cache:
+                inv_corr = self.inv_corr_cache[cache_key]
+            else:
+                all_var_idx = (x, y) + zz
+                corr_subset = corr[all_var_idx][:, all_var_idx]
+                inv_corr = -torch.linalg.pinv(corr_subset)
+                self.inv_corr_cache[cache_key] = inv_corr
+            par_corr = inv_corr[0, 1] / torch.sqrt(torch.abs(inv_corr[0, 0] * inv_corr[1, 1]))
 
-            if corr_coef[x, z] >= 1.0 or corr_coef[y, z] >= 1.0:
-                return 0
+        # 边界处理
+        if par_corr >= 1.0 or par_corr <= 0:
+            return 0.0 if par_corr >= 1.0 else np.inf
 
-            par_corr = (
-                    (corr_coef[x, y] - corr_coef[x, z] * corr_coef[y, z]) /
-                    np.sqrt((1 - np.power(corr_coef[x, z], 2)) * (1 - np.power(corr_coef[y, z], 2)))
-            )
-        else:  # zz contains 2 or more variables
-            all_var_idx = (x, y) + zz
-            corr_coef_subset = corr_coef[np.ix_(all_var_idx, all_var_idx)]
-            inv_corr_coef = -np.linalg.pinv(corr_coef_subset)  # consider using pinv instead of inv
-            par_corr = inv_corr_coef[0, 1] / np.sqrt(abs(inv_corr_coef[0, 0] * inv_corr_coef[1, 1]))
+        # 计算p值
+        df = self.num_records - (len(zz) + 2)
+        z = 0.5 * torch.log((1 + par_corr) / (1 - par_corr))
+        p_value = 2 * (1 - torch.distributions.Normal(0, 1).cdf(torch.abs(z) * torch.sqrt(df - 1)))
 
-        if par_corr >= 1.0:
-            return 0
-        if par_corr <= 0:
-            return np.inf
-
-        degrees_of_freedom = self.num_records - (len(zz) + 2)  # degrees of freedom to be used to calculate p-value
-
-        # # Calculate based on the t-distribution
-        # t_statistic = par_corr * np.sqrt(degrees_of_freedom / (1.-par_corr*par_corr))  # approximately t-distributed
-        # statistic = 2 * stats.t.sf(abs(t_statistic), degrees_of_freedom)  # p-value
-
-        # Estimation based on Fisher z-transform
-        z = 0.5 * np.log1p(2 * par_corr / (1 - par_corr))  # Fisher Z-transform, 0.5*log( (1+par_corr)/(1-par_corr) )
-        val_for_cdf = abs(np.sqrt(degrees_of_freedom - 1) * z)  # approximately normally distributed
-        statistic = 2 * (1 - stats.norm.cdf(val_for_cdf))  # p-value
-
-        return statistic
+        return p_value.item()
 
 
 class CondIndepCMI(StatCondIndep):

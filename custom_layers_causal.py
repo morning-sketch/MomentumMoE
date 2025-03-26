@@ -266,16 +266,19 @@ class FMoE(nn.Module):
         """
         """start causal mapping"""
         with torch.no_grad():
-            graph_tensor = []
+            # graph_tensor = []
             blsize = 128
             attn_weights=attn_weights.cpu()
             splitnum = int(attn_weights.shape[1] / blsize)
+            rets=[]
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
                     splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
-                    graph_tensor.append((attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
-            with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
-                rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
+                    rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
+                    # graph_tensor.append((attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
+
+            # with multiprocessing.Pool(processes=len(graph_tensor),initializer=worker_init) as pool:
+            #     rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
 
             # share_expert_k_list = torch.full((moe_inp.shape[0], 1), 15)
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))

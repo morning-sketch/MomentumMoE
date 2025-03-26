@@ -34,8 +34,8 @@ class CLEANN:
         self.nodes_set = nodes_set
         self.ci_test = CondIndepParCorr(
             threshold=p_val_th, dataset=None, num_records=num_samples, num_vars=num_vars,
-            count_tests=True, use_cache=True)
-        self.ci_test.correlation_matrix = corr_mat
+            count_tests=True, use_cache=True, correlation_matrix=corr_mat)
+        # self.ci_test.correlation_matrix = corr_mat
         self.StructureLearning = structure_learning_class
         self.graph = None
 
