@@ -141,8 +141,8 @@ class LearnStructICD(LearnStructBase):
                 self.graph.delete_edge(node_i, node_j)  # remove directed/undirected edge
                 self.sepset.set_sepset(node_i, node_j, ())
 
-        self.graph.orient_v_structures(self.sepset)
-        self.graph.maximally_orient_pattern(rules_set=[1, 2, 3, 4])
+        self.graph.orient_v_structures(self.sepset) #随便找个中间节点z，如果z的两个邻节点之间不相连，则让其对Z的模糊箭头变成指向Z的箭头
+        self.graph.maximally_orient_pattern(rules_set=[1, 2, 3, 4])#用一些规则去除一些边
 
     def _learn_struct_base_step_1(self):
         """
