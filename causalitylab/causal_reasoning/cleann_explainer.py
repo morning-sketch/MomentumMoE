@@ -3,7 +3,7 @@ from causal_discovery_algs import LearnStructICD
 from causal_discovery_algs.icd import create_pds_tree
 from causal_discovery_utils.cond_indep_tests import CondIndepParCorr
 from causal_discovery_utils.stat_utils import cov_to_corr
-
+import torch
 
 class CLEANN:
     def __init__(self, attention_matrix: np.ndarray, num_samples, p_val_th: float, explanation_tester,
@@ -25,7 +25,7 @@ class CLEANN:
         """
 
         # calculate correlation matrix from attention matrix
-        cov_matrix = np.matmul(attention_matrix, attention_matrix.transpose(0,1))  # COV = A @ transpose(A)
+        cov_matrix = torch.matmul(attention_matrix, attention_matrix.transpose(0,1))  # COV = A @ transpose(A)
         corr_mat = cov_to_corr(cov_matrix)
         # prepare for learning a graph
         num_vars, _ = corr_mat.shape  # number of graph-nodes

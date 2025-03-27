@@ -302,29 +302,22 @@ class CondIndepParCorr(StatCondIndep):
         self.correlation_matrix = correlation_matrix
         # 预计算逆矩阵缓存
         self.inv_corr_cache = {}
-        # max_zz_size = num_vars
-        # for zz_size in range(1, max_zz_size):
-        #     for zz in itertools.combinations(range(num_vars), zz_size):
-        #         for x in range(num_vars):
-        #             for y in range(x + 1, num_vars):
-        #                 if x not in zz and y not in zz:
-        #                     all_var_idx = (x, y) + zz
-        #                     corr_subset = self.correlation_matrix[all_var_idx,:][:, all_var_idx]
-        #                     self.inv_corr_cache[(x, y, zz)] = -torch.linalg.pinv(corr_subset)
-
     def calc_statistic(self, x, y, zz):
         """PyTorch版本的计算"""
         corr = self.correlation_matrix
-        EPS = 1e-8
         if len(zz) == 0:
+            if corr[x, y] >= 1.0:
+                return 0
             par_corr = corr[x, y]
         elif len(zz) == 1:
             z = zz[0]
+
+            if corr[x, z] >= 1.0 or corr[y, z] >= 1.0:
+                return 0
             r_xy = corr[x, y]
             r_xz = corr[x, z]
             r_yz = corr[y, z]
-            denominator = (1 - r_xz ** 2) * (1 - r_yz ** 2)
-            denom = torch.sqrt(torch.clamp(denominator, min=EPS))
+            denom = (1 - r_xz ** 2) * (1 - r_yz ** 2)
             par_corr = (r_xy - r_xz * r_yz) / denom
         else:
             cache_key = (x, y, zz)
@@ -336,16 +329,17 @@ class CondIndepParCorr(StatCondIndep):
                 inv_corr = -torch.linalg.pinv(corr_subset)
                 self.inv_corr_cache[cache_key] = inv_corr
             par_corr = inv_corr[0, 1] / torch.sqrt(torch.abs(inv_corr[0, 0] * inv_corr[1, 1]))
-
-        par_corr = torch.clamp(par_corr, min=-1+EPS, max=1-EPS)
+        if par_corr >= 1.0:
+            return 0
+        if par_corr <= 0:
+            return np.inf
         # 计算p值
         df = self.num_records - (len(zz) + 2)
         if df <= 1:  # 处理自由度不足的情况
             return 0.0
-        z = 0.5 * torch.log((1 + par_corr + EPS) / (1 - par_corr + EPS))
-
-        t_value = torch.abs(z) * torch.sqrt(torch.tensor(df - 1, dtype=torch.float32))
-        p_value = 2 * (1 - 0.5 * (1 + torch.erf(t_value / torch.sqrt(torch.tensor(2.0)))))
+        df = torch.tensor(df - 1, dtype=torch.float32)
+        z = 0.5 * torch.log((1 + par_corr) / (1 - par_corr))
+        p_value = 2 * (1 - torch.distributions.Normal(0, 1).cdf(torch.abs(z) * torch.sqrt(df - 1)))
         # 使用误差函数计算更稳定的p值
         return p_value.item()
 
