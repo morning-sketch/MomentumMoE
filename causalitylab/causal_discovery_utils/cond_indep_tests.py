@@ -302,20 +302,20 @@ class CondIndepParCorr(StatCondIndep):
         self.correlation_matrix = correlation_matrix
         # 预计算逆矩阵缓存
         self.inv_corr_cache = {}
-        max_zz_size = num_vars
-        for zz_size in range(1, max_zz_size):
-            for zz in itertools.combinations(range(num_vars), zz_size):
-                for x in range(num_vars):
-                    for y in range(x + 1, num_vars):
-                        if x not in zz and y not in zz:
-                            all_var_idx = (x, y) + zz
-                            corr_subset = self.correlation_matrix[all_var_idx][:, all_var_idx]
-                            self.inv_corr_cache[(x, y, zz)] = -torch.linalg.pinv(corr_subset)
+        # max_zz_size = num_vars
+        # for zz_size in range(1, max_zz_size):
+        #     for zz in itertools.combinations(range(num_vars), zz_size):
+        #         for x in range(num_vars):
+        #             for y in range(x + 1, num_vars):
+        #                 if x not in zz and y not in zz:
+        #                     all_var_idx = (x, y) + zz
+        #                     corr_subset = self.correlation_matrix[all_var_idx,:][:, all_var_idx]
+        #                     self.inv_corr_cache[(x, y, zz)] = -torch.linalg.pinv(corr_subset)
 
     def calc_statistic(self, x, y, zz):
         """PyTorch版本的计算"""
         corr = self.correlation_matrix
-
+        EPS = 1e-8
         if len(zz) == 0:
             par_corr = corr[x, y]
         elif len(zz) == 1:
@@ -323,7 +323,8 @@ class CondIndepParCorr(StatCondIndep):
             r_xy = corr[x, y]
             r_xz = corr[x, z]
             r_yz = corr[y, z]
-            denom = torch.sqrt((1 - r_xz ** 2) * (1 - r_yz ** 2))
+            denominator = (1 - r_xz ** 2) * (1 - r_yz ** 2)
+            denom = torch.sqrt(torch.clamp(denominator, min=EPS))
             par_corr = (r_xy - r_xz * r_yz) / denom
         else:
             cache_key = (x, y, zz)
@@ -331,20 +332,21 @@ class CondIndepParCorr(StatCondIndep):
                 inv_corr = self.inv_corr_cache[cache_key]
             else:
                 all_var_idx = (x, y) + zz
-                corr_subset = corr[all_var_idx][:, all_var_idx]
+                corr_subset = corr[all_var_idx,:][:, all_var_idx]
                 inv_corr = -torch.linalg.pinv(corr_subset)
                 self.inv_corr_cache[cache_key] = inv_corr
             par_corr = inv_corr[0, 1] / torch.sqrt(torch.abs(inv_corr[0, 0] * inv_corr[1, 1]))
 
-        # 边界处理
-        if par_corr >= 1.0 or par_corr <= 0:
-            return 0.0 if par_corr >= 1.0 else np.inf
-
+        par_corr = torch.clamp(par_corr, min=-1+EPS, max=1-EPS)
         # 计算p值
         df = self.num_records - (len(zz) + 2)
-        z = 0.5 * torch.log((1 + par_corr) / (1 - par_corr))
-        p_value = 2 * (1 - torch.distributions.Normal(0, 1).cdf(torch.abs(z) * torch.sqrt(df - 1)))
+        if df <= 1:  # 处理自由度不足的情况
+            return 0.0
+        z = 0.5 * torch.log((1 + par_corr + EPS) / (1 - par_corr + EPS))
 
+        t_value = torch.abs(z) * torch.sqrt(torch.tensor(df - 1, dtype=torch.float32))
+        p_value = 2 * (1 - 0.5 * (1 + torch.erf(t_value / torch.sqrt(torch.tensor(2.0)))))
+        # 使用误差函数计算更稳定的p值
         return p_value.item()
 
 
