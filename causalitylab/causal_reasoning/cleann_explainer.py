@@ -24,9 +24,10 @@ class CLEANN:
         """
 
         # calculate correlation matrix from attention matrix
-        cov_matrix = np.matmul(attention_matrix, attention_matrix.transpose(0,1))  # COV = A @ transpose(A)
-        corr_mat = cov_to_corr(cov_matrix)
+        # cov_matrix = np.matmul(attention_matrix, attention_matrix.transpose(0,1))  # COV = A @ transpose(A)
+        # corr_mat = cov_to_corr(cov_matrix)
         # prepare for learning a graph
+        corr_mat=attention_matrix
         num_vars, _ = corr_mat.shape  # number of graph-nodes
         if nodes_set is None:
             nodes_set = set(range(num_vars))
@@ -34,7 +35,7 @@ class CLEANN:
         self.ci_test = CondIndepParCorr(
             threshold=p_val_th, dataset=None, num_records=num_samples, num_vars=num_vars,
             count_tests=True, use_cache=True, correlation_matrix=corr_mat)
-        # self.ci_test.correlation_matrix = corr_mat
+        self.ci_test.correlation_matrix = corr_mat
         self.StructureLearning = structure_learning_class
         self.graph = None
 

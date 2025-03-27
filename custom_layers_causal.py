@@ -26,7 +26,21 @@ import networkx as nx
 from networkx.algorithms.community import kernighan_lin_bisection
 import multiprocessing
 """for causal map end """
-
+def preprocess_attention_weights(attn_weights):
+    """
+    预处理attention weights矩阵，在GPU上计算cov_matrix和corr_mat
+    :param attn_weights: shape为(6,256,256)的attention weights张量
+    :return: 预处理后的correlation matrices
+    """
+    # 计算cov_matrix = A @ A.T
+    cov_matrices = torch.matmul(attn_weights, attn_weights.transpose(1, 2))
+    
+    # 计算correlation matrix
+    diag = torch.sqrt(torch.diagonal(cov_matrices, dim1=1, dim2=2))
+    inv_std = 1.0 / diag
+    corr_matrices = cov_matrices * inv_std.unsqueeze(2) * inv_std.unsqueeze(1)
+    
+    return corr_matrices
 def block_average_pooling(x, block_size=16):
     # 将输入张量转换为4D张量 (batch_size=1, channels=1, height, width)
     x = x.unsqueeze(0).unsqueeze(0)
@@ -66,16 +80,6 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
         for j in explain_ret[-1][0]:
             ret[-1]=ret[-1]+get_real_index(j,block_size)
     return ret
-
-# def combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score):
-#     gate_top_k_idx=gate_top_k_idx.clone()
-#     gate_score=gate_score.clone()
-#     for i in range(share_expert_k_list.shape[0]):
-#         if share_expert_k_list[i][0] != 0:
-#             gate_top_k_idx[i][-1] = share_expert_k_list[i][0]
-#             gate_score[i][-1] = 0.5
-#             gate_score[i][-2] = 0.5
-#     return gate_top_k_idx,gate_score
 
 def get_real_index(index,block_size):
     real_index=[]
@@ -268,19 +272,15 @@ class FMoE(nn.Module):
         with torch.no_grad():
             # graph_tensor = []
             blsize = 128
-            attn_weights=attn_weights.cpu()
             splitnum = int(attn_weights.shape[1] / blsize)
             rets=[]
+            # 在模型初始化或数据加载时预处理
+            attn_weights = preprocess_attention_weights(attn_weights)
+            # 在需要使用时
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
                     splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
                     rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
-                    # graph_tensor.append((attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
-
-            # with multiprocessing.Pool(processes=len(graph_tensor),initializer=worker_init) as pool:
-            #     rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-
-            # share_expert_k_list = torch.full((moe_inp.shape[0], 1), 15)
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
             for add_index in range(splitnum * attn_weights.shape[0]):
                 for j in range(len(rets[add_index])):
