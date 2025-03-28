@@ -73,15 +73,6 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims,avg_size):
             ret[-1]=ret[-1]+get_real_index(j,avg_size)
     return ret
 
-# def combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score):
-#     gate_top_k_idx=gate_top_k_idx.clone()
-#     gate_score=gate_score.clone()
-#     for i in range(share_expert_k_list.shape[0]):
-#         if share_expert_k_list[i][0] != 0:
-#             gate_top_k_idx[i][-1] = share_expert_k_list[i][0]
-#             gate_score[i][-1] = 0.5
-#             gate_score[i][-2] = 0.5
-#     return gate_top_k_idx,gate_score
 
 def get_real_index(index,block_size):
     real_index=[]
