@@ -23,10 +23,7 @@ class CLEANN:
             the explanations found from the graph will be returned.
         :param structure_learning_class: structure learning class to instantiate. Default: LearnStructICD.
         """
-
-        # calculate correlation matrix from attention matrix
-        cov_matrix = torch.matmul(attention_matrix, attention_matrix.transpose(0,1))  # COV = A @ transpose(A)
-        corr_mat = cov_to_corr(cov_matrix)
+        corr_mat = attention_matrix
         # prepare for learning a graph
         num_vars, _ = corr_mat.shape  # number of graph-nodes
         if nodes_set is None:
@@ -35,7 +32,6 @@ class CLEANN:
         self.ci_test = CondIndepParCorr(
             threshold=p_val_th, dataset=None, num_records=num_samples, num_vars=num_vars,
             count_tests=True, use_cache=True, correlation_matrix=corr_mat)
-        # self.ci_test.correlation_matrix = corr_mat
         self.StructureLearning = structure_learning_class
         self.graph = None
 

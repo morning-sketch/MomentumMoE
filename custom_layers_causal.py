@@ -26,13 +26,21 @@ import networkx as nx
 from networkx.algorithms.community import kernighan_lin_bisection
 import multiprocessing
 """for causal map end """
+def preprocess_attention_weights(attn_weights):
+    # 计算cov_matrix = A @ A.T
+    cov_matrices = torch.matmul(attn_weights, attn_weights.transpose(1, 2))
+    diag = torch.sqrt(torch.diagonal(cov_matrices, dim1=1, dim2=2))
+    inv_std = 1.0 / diag
+    corr_matrices = cov_matrices * inv_std.unsqueeze(2) * inv_std.unsqueeze(1)
+    
+    return corr_matrices
 
-def block_average_pooling(x, block_size=16):
+def block_average_pooling(x, avg_size=16):
     # 将输入张量转换为4D张量 (batch_size=1, channels=1, height, width)
     x = x.unsqueeze(0).unsqueeze(0)
 
     # 使用unfold操作将张量分块
-    unfolded = x.unfold(2, block_size, block_size).unfold(3, block_size, block_size)
+    unfolded = x.unfold(3, avg_size, avg_size).unfold(4, avg_size, avg_size)
 
     # 计算每个块的平均值
     pooled = unfolded.mean(dim=(-1, -2))
@@ -40,7 +48,7 @@ def block_average_pooling(x, block_size=16):
     # 去掉batch和channel维度
     return pooled.squeeze(0).squeeze(0)
 
-def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
+def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims,avg_size):
     """
     将给定邻接矩阵表示的图划分为固定数量且节点数量尽量相同的子图。
 
@@ -51,9 +59,7 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     返回:
     list: 划分后的子图列表，每个子图是一个networkx图对象
     """
-    block_size = 16
-    adj_matrix=block_average_pooling(adj_matrix,block_size=block_size)
-    # 创建初始图
+
     nodes_of_interest = {i for i in range(adj_matrix.shape[0])}
     explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=1e-2,
                        explanation_tester=None, nodes_set=nodes_of_interest)
@@ -62,9 +68,9 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     max_mean_row_index = torch.argmax(row_means).item()
     explain_ret = explainer.explain(target_node_idx=max_mean_row_index)
     if len(explain_ret)!=0:
-        ret.append(get_real_index(max_mean_row_index,block_size))
+        ret.append(get_real_index(max_mean_row_index,avg_size))
         for j in explain_ret[-1][0]:
-            ret[-1]=ret[-1]+get_real_index(j,block_size)
+            ret[-1]=ret[-1]+get_real_index(j,avg_size)
     return ret
 
 # def combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score):
@@ -268,19 +274,17 @@ class FMoE(nn.Module):
         with torch.no_grad():
             # graph_tensor = []
             blsize = 128
+            avg_size = 16
+            blsize = int(blsize/avg_size)
+            attn_weights=block_average_pooling(attn_weights,avg_size=avg_size)
+            attn_weights=preprocess_attention_weights(attn_weights)
             attn_weights=attn_weights.cpu()
             splitnum = int(attn_weights.shape[1] / blsize)
             rets=[]
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
                     splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
-                    rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
-                    # graph_tensor.append((attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
-
-            # with multiprocessing.Pool(processes=len(graph_tensor),initializer=worker_init) as pool:
-            #     rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-
-            # share_expert_k_list = torch.full((moe_inp.shape[0], 1), 15)
+                    rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1],avg_size))
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
             for add_index in range(splitnum * attn_weights.shape[0]):
                 for j in range(len(rets[add_index])):
