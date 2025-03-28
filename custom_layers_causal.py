@@ -27,18 +27,14 @@ from networkx.algorithms.community import kernighan_lin_bisection
 import multiprocessing
 """for causal map end """
 
-def block_average_pooling(x, block_size=16):
-    # 将输入张量转换为4D张量 (batch_size=1, channels=1, height, width)
-    x = x.unsqueeze(0).unsqueeze(0)
+def block_average_pooling(arr, block_size=16):
+    """
+    输入的二维数组x，将其划分为block_size * block_size的块，然后对每个块内的元素取平均值。
+    返回一个新的二维数组，其中每个元素是原数组对应块内元素的平均值。
+    """
+    h, w = arr.shape
+    return arr.reshape(h//block_size, block_size, w//block_size, block_size).mean(axis=(1,3))
 
-    # 使用unfold操作将张量分块
-    unfolded = x.unfold(2, block_size, block_size).unfold(3, block_size, block_size)
-
-    # 计算每个块的平均值
-    pooled = unfolded.mean(dim=(-1, -2))
-
-    # 去掉batch和channel维度
-    return pooled.squeeze(0).squeeze(0)
 
 def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     """
@@ -58,8 +54,8 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=1e-2,
                        explanation_tester=None, nodes_set=nodes_of_interest)
     ret=[]
-    row_means=adj_matrix.mean(dim=1)
-    max_mean_row_index = torch.argmax(row_means).item()
+    row_means=adj_matrix.mean(axis=1)
+    max_mean_row_index = np.argmax(row_means)
     explain_ret = explainer.explain(target_node_idx=max_mean_row_index)
     if len(explain_ret)!=0:
         ret.append(get_real_index(max_mean_row_index,block_size))
@@ -268,14 +264,16 @@ class FMoE(nn.Module):
         with torch.no_grad():
             graph_tensor = []
             blsize = 128
-            attn_weights=attn_weights.cpu()
+            #将attn_weights变成numpy数组
+            attn_weights=attn_weights.cpu().numpy()
             splitnum = int(attn_weights.shape[1] / blsize)
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
                     splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
-                    graph_tensor.append((attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
-            with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
-                rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
+                    rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
+                    # graph_tensor.append((attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
+            # with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
+            #     rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
 
             # share_expert_k_list = torch.full((moe_inp.shape[0], 1), 15)
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
