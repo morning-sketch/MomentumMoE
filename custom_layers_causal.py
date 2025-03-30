@@ -266,6 +266,7 @@ class FMoE(nn.Module):
             blsize = 128
             #将attn_weights变成numpy数组
             attn_weights=attn_weights.cpu().numpy()
+            rets=[]
             splitnum = int(attn_weights.shape[1] / blsize)
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
