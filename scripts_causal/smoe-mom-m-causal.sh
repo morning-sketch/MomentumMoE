@@ -1,4 +1,4 @@
-mkdir -p /hy-tmp/checkpoint/
+mkdir -p /hy-tmp/checkpoint-causal/
 
 args="
 --data /hy-tmp/data_directory/wikitext-103/ \
@@ -18,7 +18,7 @@ args="
 --lr-warmup 4000 \
 --niter 80 \
 --batch-sz 48 \
---batch-split 2 \
+--batch-split 4 \
 --nbatches 1000 \
 --distributed \
 --gamma1 1.0 \
@@ -26,11 +26,11 @@ args="
 --mu 0.7 \
 --beta1 0.9 \
 --beta2 0.999 \
---checkpoint /hy-tmp/checkpoint/smoe-mom-m-causal.pt \
+--checkpoint /hy-tmp/checkpoint-causal/smoe.pt \
 "
-export PYTHONOPTIMIZE=1
+
 echo "Training ..."
-CUDA_VISIBLE_DEVICES='0' python -m torch.distributed.launch --master_port 10013 --nproc_per_node=1 --use_env finetune_train_causal.py $args
+CUDA_VISIBLE_DEVICES='0' python -m torch.distributed.launch --master_port 10013 --nproc_per_node=1 --use_env train_causal.py $args
 
 echo "Evaluation ..."
-CUDA_VISIBLE_DEVICES='0' python -m torch.distributed.launch --master_port 10013 --nproc_per_node=1 --use_env finetune_train_causal.py $args --resume --full-eval-mode
+CUDA_VISIBLE_DEVICES='0' python -m torch.distributed.launch --master_port 10013 --nproc_per_node=1 --use_env train_causal.py $args --resume --full-eval-mode
