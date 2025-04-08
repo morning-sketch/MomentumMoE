@@ -200,9 +200,8 @@ class FMoE(nn.Module):
         else:
             self.slice_size = self.slice_group.size()
             self.slice_rank = self.slice_group.rank()
-
-        self.top_k = moe_top_k
         self.share_expert_num = 1
+        self.top_k = moe_top_k+self.share_expert_num
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
             self.share_expert=nn.ModuleList([e(d_model) for e in expert[0:2]])
@@ -215,7 +214,7 @@ class FMoE(nn.Module):
         else:
             self.experts_fused = True
 
-        self.gate = gate(d_model, num_expert-self.share_expert_num, world_size, moe_top_k)
+        self.gate = gate(d_model, num_expert-self.share_expert_num, world_size, self.top_k)
         self.gate_hook = gate_hook
         self.mask = mask
         self.mask_dict = mask_dict
@@ -272,11 +271,6 @@ class FMoE(nn.Module):
                 for add_index in range(splitnum):
                     splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
                     rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
-                    # graph_tensor.append((attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
-            # with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
-            #     rets = pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-
-            # share_expert_k_list = torch.full((moe_inp.shape[0], 1), 15)
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
             for add_index in range(splitnum * attn_weights.shape[0]):
                 for j in range(len(rets[add_index])):
