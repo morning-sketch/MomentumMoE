@@ -28,7 +28,7 @@ class CLEANN:
         cov_matrix = np.matmul(attention_matrix, attention_matrix.transpose(0,1))  # COV = A @ transpose(A)
         corr_mat = cov_to_corr(cov_matrix)
         # prepare for learning a graph
-        p_val_th = np.percentile(corr_mat.ravel(), 90)
+        p_val_th = np.percentile(corr_mat.ravel(), 50)
         num_vars, _ = corr_mat.shape  # number of graph-nodes
         if nodes_set is None:
             nodes_set = set(range(num_vars))
