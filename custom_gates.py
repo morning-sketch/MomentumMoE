@@ -107,18 +107,18 @@ class CustomNaiveGate_Balance_SMoE_Causal(BaseGate):
             gate_top_k_val = gate_top_k_val.view(-1, self.tot_expert)
         else:
             gate_top_k_val, gate_top_k_idx = torch.topk(
-                gate, k=self.top_k, dim=-1, largest=True, sorted=False
+                gate, k=self.top_k, dim=-1, largest=True, sorted=True
             )  # [.. x top_k]
             gate_top_k_val = gate_top_k_val.view(-1, self.top_k)  # (BxL) x 1 x top_k
 
         gate_top_k_idx=gate_top_k_idx.clone()
         gate_score=gate_top_k_val.clone()
+        share_expert_k_list = share_expert_k_list.to(gate_top_k_idx.dtype)
         mask = share_expert_k_list[:, 0] != 0
-        mask2 = share_expert_k_list[:, 0] == 0
         if mask.any():
-            gate_top_k_idx[mask][-1] = share_expert_k_list[mask][0]
-            gate_score[mask][-1] = gate_score[mask][0] + gate_score[mask][1]
-            gate_score[mask2][-1]=0
+            gate_top_k_idx[mask,-1] = share_expert_k_list[mask,0]
+            gate_score[mask,-1] = gate_score[mask,0]+gate_score[mask,1]
+            gate_score[~mask,-1]=0
         gate_score = F.softmax(gate_score, dim=-1)
         if self.g_blance:
             self.set_load_balance(gate, gate_top_k_idx)

@@ -57,21 +57,12 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     row_means=adj_matrix.mean(axis=1)
     max_mean_row_index = np.argmax(row_means)
     explain_ret = explainer.explain(target_node_idx=max_mean_row_index)
+    ret.append(get_real_index(max_mean_row_index, block_size))
     if len(explain_ret)!=0:
-        ret.append(get_real_index(max_mean_row_index,block_size))
         for j in explain_ret[-1][0]:
             ret[-1]=ret[-1]+get_real_index(j,block_size)
     return ret
 
-# def combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score):
-#     gate_top_k_idx=gate_top_k_idx.clone()
-#     gate_score=gate_score.clone()
-#     for i in range(share_expert_k_list.shape[0]):
-#         if share_expert_k_list[i][0] != 0:
-#             gate_top_k_idx[i][-1] = share_expert_k_list[i][0]
-#             gate_score[i][-1] = 0.5
-#             gate_score[i][-2] = 0.5
-#     return gate_top_k_idx,gate_score
 
 def get_real_index(index,block_size):
     real_index=[]
@@ -204,12 +195,10 @@ class FMoE(nn.Module):
         self.top_k = moe_top_k+self.share_expert_num
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
-            self.share_expert=nn.ModuleList([e(d_model) for e in expert[0:2]])
             self.experts_fused = False
             self.num_expert = num_expert = len(expert)
         elif expert is not None:
             self.experts = nn.ModuleList([expert(d_model) for _ in range(num_expert)])
-            self.share_expert=nn.ModuleList([expert(d_model) for _ in range(2)])
             self.experts_fused = False
         else:
             self.experts_fused = True
@@ -261,7 +250,6 @@ class FMoE(nn.Module):
         """
         """start causal mapping"""
         with torch.no_grad():
-            graph_tensor = []
             blsize = 128
             #将attn_weights变成numpy数组
             attn_weights=attn_weights.cpu().numpy()
@@ -272,10 +260,10 @@ class FMoE(nn.Module):
                     splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
                     rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
-            for add_index in range(splitnum * attn_weights.shape[0]):
+            for add_index in range(len(rets)):
                 for j in range(len(rets[add_index])):
                     for k in range(0, len(rets[add_index][j])):
-                        share_expert_k_list[rets[add_index][j][k]] = self.num_expert-1
+                        share_expert_k_list[add_index*blsize+rets[add_index][j][k]] = self.num_expert-1
             """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)
