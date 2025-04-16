@@ -63,6 +63,12 @@ PARAMS_CONFIG = {
             "help": "block size " "(the length of sequence to process in parallel)",
             "dest": "block_size",
         },
+        "--cmp-sz": {
+            "type": int,
+            "default": 16,
+            "help": "cmp_size " "(the length of sequence to process in parallel)",
+            "dest": "cmp_size",
+        },
         "--nheads": {
             "type": int,
             "default": 2,

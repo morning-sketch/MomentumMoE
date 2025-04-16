@@ -11,6 +11,27 @@ from custom_gates import *
 import cmath
 
 
+class CompressionMLP(nn.Module):
+    def __init__(self, n, c, d):
+        super(CompressionMLP, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(n, n * d),
+            nn.ReLU(),
+            nn.Linear(n * d, n // c)
+        )
+
+    def forward(self, x):
+        b, n, d = x.shape
+        # 调整输入张量的形状以适应线性层
+        x = x.permute(0, 2, 1).contiguous()
+        x = x.view(-1, n)
+        # 通过 MLP 进行压缩
+        x = self.mlp(x)
+        # 恢复形状
+        x = x.view(b, d, -1)
+        x = x.permute(0, 2, 1).contiguous()
+        return x
+
 # Size notations:
 # B = batch_size, H = hidden_size, M = block_size, L = attn_span
 def _skew(X, pad_value):
@@ -34,14 +55,11 @@ def _unskew(X):
     X = X.view(B, M, M + L + 1)  # B x M x L+M+1
     X = X[:, :, :L]  # B x M x L
     return X
-
-
 class SeqAttention(nn.Module):
     """Sequential self-attention layer.
     Each token will attend to its previous fixed number of steps.
     Note that attention doesn't include the current step itself.
     """
-
     def __init__(self, hidden_size, attn_span, dropout, adapt_span_params, **kargs):
         nn.Module.__init__(self)
         self.dropout = nn.Dropout(dropout)
@@ -67,8 +85,69 @@ class SeqAttention(nn.Module):
         # B x M (dest) x (M+L) (src)
         attn_cont = torch.matmul(query, key.transpose(-1, -2))
         attn_cont = _unskew(attn_cont)  # B x M x L
-        anum=int(attn_cont.shape[2]-attn_cont.shape[1])
-        attn_weight=F.softmax(attn_cont[:,:,anum:]/ math.sqrt(self.hidden_size), dim=-1)
+        # compute the effect of position embedding
+        attn_pos = torch.matmul(query, key_pe)  # B x M x L_pos
+        attn = attn_cont + attn_pos
+
+
+        attn = attn / math.sqrt(self.hidden_size)  # B x M X L_pos
+        attn = F.softmax(attn, dim=-1)
+
+        if self.adapt_span_enabled:
+            # trim attention lengths according to the learned span
+            attn = self.adaptive_span(attn)
+        attn = self.dropout(attn)  # B x M X L_pos
+
+        attn_cont = _skew(attn, 0)  # B x M X (L+M)
+        out = torch.matmul(attn_cont, value)  # B x M x H
+
+        return out
+
+    def get_cache_size(self):
+        if self.adapt_span_enabled:
+            return self.adaptive_span.get_cache_size()
+        else:
+            return self.attn_span
+
+class Causal_SeqAttention(nn.Module):
+    """Sequential self-attention layer.
+    Each token will attend to its previous fixed number of steps.
+    Note that attention doesn't include the current step itself.
+    """
+    def __init__(self, hidden_size, attn_span, dropout,block_size,cmp_size, adapt_span_params, **kargs):
+        nn.Module.__init__(self)
+        self.dropout = nn.Dropout(dropout)
+        self.hidden_size = hidden_size  # size of a single head
+        self.attn_span = attn_span
+        self.adapt_span_enabled = adapt_span_params["adapt_span_enabled"]
+        if self.adapt_span_enabled:
+            self.adaptive_span = AdaptiveSpan(
+                attn_span=attn_span, **adapt_span_params, **kargs
+            )
+        self.q_compress_mlp = CompressionMLP(n=block_size, c=cmp_size, d=1)
+        self.k_compress_mlp = CompressionMLP(n=block_size, c=cmp_size, d=1)
+
+    def forward(self, query, key, value, key_pe):
+        # query size = B x M x H
+        # key, value sizes = B x (M+L) x H
+
+        if self.adapt_span_enabled:
+            # [optional] trim out memory to reduce unnecessary computation
+            key, value, key_pe = self.adaptive_span.trim_memory(
+                query, key, value, key_pe
+            )
+
+        # compute attention from context
+        # B x M (dest) x (M+L) (src)
+        attn_cont = torch.matmul(query, key.transpose(-1, -2))
+        attn_cont = _unskew(attn_cont)  # B x M x L
+
+        cmp_key=self.k_compress_mlp(key[:,query.shape[1]:,:])
+        cmp_query=self.q_compress_mlp(query)
+        attn_cont_cmp = torch.matmul(cmp_query, cmp_key.transpose(-1, -2))
+        attn_weight=F.softmax(attn_cont_cmp/ math.sqrt(self.hidden_size), dim=-1)
+        attn_weight=attn_weight.view(query.shape[0],-1, attn_weight.shape[1], attn_weight.shape[1])
+        attn_weight=attn_weight.mean(1)
         # compute the effect of position embedding
         attn_pos = torch.matmul(query, key_pe)  # B x M x L_pos
         attn = attn_cont + attn_pos
@@ -92,7 +171,45 @@ class SeqAttention(nn.Module):
             return self.adaptive_span.get_cache_size()
         else:
             return self.attn_span
+class Causal_MultiHeadSeqAttention(nn.Module):
+    def __init__(self, hidden_size, nb_heads,block_size, **kargs):
+        nn.Module.__init__(self)
+        assert hidden_size % nb_heads == 0
+        self.nb_heads = nb_heads
+        self.head_dim = hidden_size // nb_heads
+        self.attn = Causal_SeqAttention(hidden_size=self.head_dim, nb_heads=nb_heads,block_size=block_size, **kargs)
+        self.proj_query = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.proj_out = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.proj_val = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.proj_key = nn.Linear(hidden_size, hidden_size, bias=False)
 
+    def head_reshape(self, x):
+        K = self.nb_heads
+        D = self.head_dim
+        x = x.view(x.size()[:-1] + (K, D))  # B x (M+L) x K x D
+        x = x.transpose(1, 2).contiguous()  # B x K x (M+L) x D
+        x = x.view(-1, x.size(-2), x.size(-1))  # B_K x (M+L) x D
+        return x
+
+    def forward(self, query, key, value, key_pe):
+        B = query.size(0)
+        K = self.nb_heads
+        D = self.head_dim
+        M = query.size(1)
+
+        query = self.proj_query(query)
+        query = self.head_reshape(query)
+        value = self.proj_val(value)
+        value = self.head_reshape(value)
+        key = self.proj_key(key)
+        key = self.head_reshape(key)
+
+        out, att_weight = self.attn(query, key, value, key_pe)  # B_K x M x D
+        out = out.view(B, K, M, D)  # B x K x M x D
+        out = out.transpose(1, 2).contiguous()  # B x M x K x D
+        out = out.view(B, M, -1)  # B x M x K_D
+        out = self.proj_out(out)
+        return out,att_weight
 
 class MultiHeadSeqAttention(nn.Module):
     def __init__(self, hidden_size, nb_heads, **kargs):
@@ -127,14 +244,12 @@ class MultiHeadSeqAttention(nn.Module):
         key = self.proj_key(key)
         key = self.head_reshape(key)
 
-        out, att_weight = self.attn(query, key, value, key_pe)  # B_K x M x D
-        att_weight=att_weight.view(B, K, M, M)
-        att_weight=att_weight.mean(1)
+        out= self.attn(query, key, value, key_pe)  # B_K x M x D
         out = out.view(B, K, M, D)  # B x K x M x D
         out = out.transpose(1, 2).contiguous()  # B x M x K x D
         out = out.view(B, M, -1)  # B x M x K_D
         out = self.proj_out(out)
-        return out,att_weight
+        return out
 
 class MultiHeadSeqSymAttention(nn.Module):
     def __init__(self, hidden_size, nb_heads, **kargs):
@@ -286,7 +401,8 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
         mu=0.9,
         beta1=0.9,
         beta2=0.999,
-        layerth=0
+        layerth=0,
+        cmp_size=0
     ):
         activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
         super().__init__(
@@ -306,6 +422,7 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
         self.beta1 = beta1
         self.beta2 = beta2
         self.layerth = layerth
+        self.cmp_size=cmp_size
     def forward(self, inp, moment,att_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
@@ -318,7 +435,7 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
 
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,att_weights)
+            core_out = super().forward(inp,att_weights,self.cmp_size)
             core_out = self.dropout(core_out)
 
             ##### Momentum
@@ -641,6 +758,8 @@ class TransformerSeqLayer(nn.Module):
         beta1=0.9,
         beta2=0.999,
         layerth=0,
+        block_size=0,
+        cmp_size=0,
         **kargs,
     ):
         nn.Module.__init__(self)
@@ -656,6 +775,9 @@ class TransformerSeqLayer(nn.Module):
             gate = CustomNaiveGate_Balance_SMoE_Causal
 
         self.attn = (
+            Causal_MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout,block_size=block_size, cmp_size=cmp_size,**kargs)
+            if g is "d"
+            else
             MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout, **kargs)
             if s is "s"
             else None
@@ -741,6 +863,7 @@ class TransformerSeqLayer(nn.Module):
                     beta1=beta1,
                     beta2=beta2,
                     layerth=layerth,
+                    cmp_size=cmp_size,
                 )
                 if g is "d"
                 else
@@ -800,7 +923,10 @@ class TransformerSeqLayer(nn.Module):
 
         if self.use_attn:
             h_all = torch.cat([h_cache, h], dim=1)  # B x (M+L) x H
-            attn_out,attn_weights = self.attn(h, h_all, h_all, key_pe)
+            if self.g == "d" :
+                attn_out, attn_weights = self.attn(h, h_all, h_all, key_pe)
+            else :
+                attn_out= self.attn(h, h_all, h_all, key_pe)
             h = self.norm1(h + attn_out)  # B x M x H
         if self.use_smoe:
             if self.g == "m" or self.g == "a":
@@ -846,6 +972,8 @@ class CausalMoE(nn.Module):
         mu,
         beta1,
         beta2,
+        block_size,
+        cmp_size,
         **kargs,
     ):
         nn.Module.__init__(self)
@@ -887,6 +1015,8 @@ class CausalMoE(nn.Module):
                     beta1=beta1,
                     beta2=beta2,
                     layerth=i,
+                    block_size=block_size,
+                    cmp_size=cmp_size,
                     **kargs,
                 )
                 for i in range(nb_layers)
@@ -920,6 +1050,8 @@ class CausalMoE(nn.Module):
                             beta1=beta1,
                             beta2=beta2,
                             layerth=i,
+                            block_size=block_size,
+                            cmp_size=cmp_size,
                             **kargs,
                         ),
                         TransformerSeqLayer(
@@ -947,6 +1079,8 @@ class CausalMoE(nn.Module):
                             beta1=beta1,
                             beta2=beta2,
                             layerth=i,
+                            block_size=block_size,
+                            cmp_size=cmp_size,
                             **kargs,
                         ),
                     ]

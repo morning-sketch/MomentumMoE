@@ -27,16 +27,7 @@ from networkx.algorithms.community import kernighan_lin_bisection
 import multiprocessing
 """for causal map end """
 
-def block_average_pooling(arr, block_size=16):
-    """
-    输入的二维数组x，将其划分为block_size * block_size的块，然后对每个块内的元素取平均值。
-    返回一个新的二维数组，其中每个元素是原数组对应块内元素的平均值。
-    """
-    h, w = arr.shape
-    return arr.reshape(h//block_size, block_size, w//block_size, block_size).mean(axis=(1,3))
-
-
-def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
+def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims,cmp_size):
     """
     将给定邻接矩阵表示的图划分为固定数量且节点数量尽量相同的子图。
 
@@ -47,8 +38,6 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     返回:
     list: 划分后的子图列表，每个子图是一个networkx图对象
     """
-    block_size = 16
-    adj_matrix=block_average_pooling(adj_matrix,block_size=block_size)
     # 创建初始图
     nodes_of_interest = {i for i in range(adj_matrix.shape[0])}
     explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=1e-2,
@@ -57,17 +46,17 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     row_means=adj_matrix.mean(axis=1)
     max_mean_row_index = np.argmax(row_means)
     explain_ret = explainer.explain(target_node_idx=max_mean_row_index)
-    ret.append(get_real_index(max_mean_row_index, block_size))
+    ret.append(get_real_index(max_mean_row_index, cmp_size))
     if len(explain_ret)!=0:
         for j in explain_ret[-1][0]:
-            ret[-1]=ret[-1]+get_real_index(j,block_size)
+            ret[-1]=ret[-1]+get_real_index(j,cmp_size)
     return ret
 
 
-def get_real_index(index,block_size):
+def get_real_index(index,cmp_size):
     real_index=[]
-    for i in range(block_size):
-        real_index.append(index*block_size+i)
+    for i in range(cmp_size):
+        real_index.append(index*cmp_size+i)
     return real_index
 
 def mark_module_parallel_comm(module, comm):
@@ -242,7 +231,7 @@ class FMoE(nn.Module):
                 mark_module_parallel_comm(self.experts, comm)
         mark_module_parallel_comm(self.gate, "gate")
 
-    def forward(self, moe_inp,attn_weights):
+    def forward(self, moe_inp,attn_weights,cmp_size):
         r"""
         The FMoE module first computes gate output, and then conduct MoE forward
         according to the gate.  The score of the selected gate given by the
@@ -250,7 +239,7 @@ class FMoE(nn.Module):
         """
         """start causal mapping"""
         with torch.no_grad():
-            blsize = 128
+            blsize = 8
             #将attn_weights变成numpy数组
             attn_weights=attn_weights.cpu().numpy()
             rets=[]
@@ -258,12 +247,12 @@ class FMoE(nn.Module):
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
                     splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
-                    rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1]))
+                    rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1],cmp_size=cmp_size))
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
             for add_index in range(len(rets)):
                 for j in range(len(rets[add_index])):
                     for k in range(0, len(rets[add_index][j])):
-                        share_expert_k_list[add_index*blsize+rets[add_index][j][k]] = self.num_expert-1
+                        share_expert_k_list[add_index*blsize*cmp_size+rets[add_index][j][k]] = self.num_expert-1
             """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)
