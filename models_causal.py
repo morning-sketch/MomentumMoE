@@ -142,7 +142,7 @@ class Causal_SeqAttention(nn.Module):
         attn_cont = torch.matmul(query, key.transpose(-1, -2))
         attn_cont = _unskew(attn_cont)  # B x M x L
 
-        cmp_key=self.k_compress_mlp(key[:,query.shape[1]:,:])
+        cmp_key=self.k_compress_mlp(key[:,-query.shape[1]:,:])
         cmp_query=self.q_compress_mlp(query)
         attn_cont_cmp = torch.matmul(cmp_query, cmp_key.transpose(-1, -2))
         attn_weight=F.softmax(attn_cont_cmp/ math.sqrt(self.hidden_size), dim=-1)
@@ -404,7 +404,8 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
         beta1=0.9,
         beta2=0.999,
         layerth=0,
-        cmp_size=0
+        cmp_size=0,
+        graph_size=0,
     ):
         activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
         super().__init__(
@@ -425,6 +426,7 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
         self.beta2 = beta2
         self.layerth = layerth
         self.cmp_size=cmp_size
+        self.graph_size=graph_size
     def forward(self, inp, moment,att_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
@@ -437,7 +439,7 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
 
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,att_weights,self.cmp_size)
+            core_out = super().forward(inp,att_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             ##### Momentum
@@ -762,6 +764,7 @@ class TransformerSeqLayer(nn.Module):
         layerth=0,
         block_size=0,
         cmp_size=0,
+        graph_size=0,
         **kargs,
     ):
         nn.Module.__init__(self)
@@ -866,6 +869,7 @@ class TransformerSeqLayer(nn.Module):
                     beta2=beta2,
                     layerth=layerth,
                     cmp_size=cmp_size,
+                    graph_size=graph_size,
                 )
                 if g is "d"
                 else
@@ -976,6 +980,7 @@ class CausalMoE(nn.Module):
         beta2,
         block_size,
         cmp_size,
+        graph_size,
         **kargs,
     ):
         nn.Module.__init__(self)
@@ -1019,6 +1024,7 @@ class CausalMoE(nn.Module):
                     layerth=i,
                     block_size=block_size,
                     cmp_size=cmp_size,
+                    graph_size=graph_size,
                     **kargs,
                 )
                 for i in range(nb_layers)
@@ -1054,6 +1060,7 @@ class CausalMoE(nn.Module):
                             layerth=i,
                             block_size=block_size,
                             cmp_size=cmp_size,
+                            graph_size=graph_size,
                             **kargs,
                         ),
                         TransformerSeqLayer(
@@ -1083,6 +1090,7 @@ class CausalMoE(nn.Module):
                             layerth=i,
                             block_size=block_size,
                             cmp_size=cmp_size,
+                            graph_size=graph_size,
                             **kargs,
                         ),
                     ]

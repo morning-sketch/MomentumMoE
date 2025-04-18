@@ -231,7 +231,7 @@ class FMoE(nn.Module):
                 mark_module_parallel_comm(self.experts, comm)
         mark_module_parallel_comm(self.gate, "gate")
 
-    def forward(self, moe_inp,attn_weights,cmp_size):
+    def forward(self, moe_inp,attn_weights,cmp_size,graph_size):
         r"""
         The FMoE module first computes gate output, and then conduct MoE forward
         according to the gate.  The score of the selected gate given by the
@@ -239,20 +239,19 @@ class FMoE(nn.Module):
         """
         """start causal mapping"""
         with torch.no_grad():
-            blsize = 8
             #将attn_weights变成numpy数组
             attn_weights=attn_weights.cpu().numpy()
             rets=[]
-            splitnum = int(attn_weights.shape[1] / blsize)
+            splitnum = int(attn_weights.shape[1] / graph_size)
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
-                    splite_slice = slice(add_index * blsize, add_index * blsize + blsize)
+                    splite_slice = slice(add_index * graph_size, add_index * graph_size + graph_size)
                     rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1],cmp_size=cmp_size))
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
             for add_index in range(len(rets)):
                 for j in range(len(rets[add_index])):
                     for k in range(0, len(rets[add_index][j])):
-                        share_expert_k_list[add_index*blsize*cmp_size+rets[add_index][j][k]] = self.num_expert-1
+                        share_expert_k_list[add_index*graph_size*cmp_size+rets[add_index][j][k]] = self.num_expert-1
             """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)

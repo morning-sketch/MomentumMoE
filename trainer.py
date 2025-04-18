@@ -143,7 +143,7 @@ def train_iteration(
 
 
 # do full evaluation
-def full_eval(model, optimizer, scheduler, data, block_size, hidden_size):
+def full_eval(model, optimizer, scheduler, data, block_size, hidden_size, batch_split):
     model.eval()
     train_pos = 0
     nb_batches_per_iter_max = math.ceil(data.size(1) / block_size)
@@ -172,7 +172,7 @@ def full_eval(model, optimizer, scheduler, data, block_size, hidden_size):
             Y=Y,
             h_cache=h_cache,
             eval_only=True,
-            batch_split=1,
+            batch_split=batch_split,
         )
         loss_all += loss
         train_pos += block_size

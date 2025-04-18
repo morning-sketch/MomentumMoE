@@ -65,9 +65,15 @@ PARAMS_CONFIG = {
         },
         "--cmp-sz": {
             "type": int,
-            "default": 16,
-            "help": "cmp_size " "(the length of sequence to process in parallel)",
+            "default": 64,
+            "help": "cmp_size " "(The compression size of the attention key value)",
             "dest": "cmp_size",
+        },
+        "--graph-sz": {
+            "type": int,
+            "default": 8,
+            "help": "The number of nodes in a causal graph",
+            "dest": "graph_size",
         },
         "--nheads": {
             "type": int,
