@@ -362,10 +362,11 @@ class FMoE(nn.Module):
 
         moe_tok_outp = tree.map_structure(bmm_func, moe_outp[:,:self.top_k,:])
         moe_tok_outp=moe_tok_outp.unsqueeze(1)
-        share_out=torch.zeros(moe_inp.shape[0],self.share_expert_num,share_fwd.shape[-1]).to(moe_inp.device)
-        share_out[share_mask,:] = share_fwd
-        sg=self.sigmoid_mlp(torch.cat((moe_tok_outp, share_out),dim=-1))
-        moe_outp=moe_tok_outp*sg+(1-sg)*share_out
+        # share_out=torch.zeros(moe_inp.shape[0],self.share_expert_num,share_fwd.shape[-1]).to(moe_inp.device)
+        # share_out[share_mask,:] = share_fwd
+        sg=self.sigmoid_mlp(torch.cat((moe_tok_outp[share_mask], share_fwd),dim=-1))
+        moe_outp[share_mask]=moe_tok_outp[share_mask]*sg+(1-sg)*share_fwd
+        moe_outp = moe_outp.squeeze(1)
         if self.slice_size > 1:
             def all_gather_func(tensor):
                 return AllGather.apply(
