@@ -776,8 +776,8 @@ class TransformerSeqLayer(nn.Module):
             gate = CustomNaiveGate_Balance_StableMoE
         else:
             print(f"{gate_name} has not been implemented yet!")
-        if g is "d":
-            gate = CustomNaiveGate_Balance_SMoE_Causal
+        # if g is "d":
+        #     gate = CustomNaiveGate_Balance_SMoE_Causal
 
         self.attn = (
             Causal_MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout,block_size=block_size, cmp_size=cmp_size,**kargs)

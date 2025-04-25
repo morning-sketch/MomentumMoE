@@ -9,7 +9,7 @@ from custom_functions import prepare_forward, ensure_comm
 from custom_functions import MOEScatter, MOEGather
 from custom_functions import AllGather, Slice
 from gates import NaiveGate
-
+from functools import partial
 from fastermoe.config import switch_from_env
 
 """for causal map start """
@@ -181,7 +181,7 @@ class FMoE(nn.Module):
             self.slice_size = self.slice_group.size()
             self.slice_rank = self.slice_group.rank()
         self.share_expert_num = 1
-        self.top_k = moe_top_k+self.share_expert_num
+        self.top_k = moe_top_k
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
             self.experts_fused = False
@@ -197,6 +197,12 @@ class FMoE(nn.Module):
         self.mask = mask
         self.mask_dict = mask_dict
         self.moe_group = moe_group
+        self.sigmoid_mlp=nn.Sequential(
+            nn.Linear(d_model, 1),
+            nn.Flatten(start_dim=1),
+            nn.Linear(self.share_expert_num+1,1),
+            nn.Sigmoid()
+        )
 
     def expert_fn(self, inp, fwd_expert_count):
         r"""
@@ -276,8 +282,8 @@ class FMoE(nn.Module):
             moe_inp = tree.map_structure(slice_func, moe_inp)
 
         share_expert_k_list = torch.tensor(share_expert_k_list).to(moe_inp.device)
-        gate_top_k_idx, gate_score = self.gate(inp=moe_inp,share_expert_k_list=share_expert_k_list)
-
+        gate_top_k_idx, gate_score = self.gate(inp=moe_inp)
+        share_expert_k_list = share_expert_k_list.to(gate_top_k_idx.dtype)
         # gate_top_k_idx,gate_score=combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score)
         if hasattr(self.gate, "dynamic_top_k"):
             self.top_k = self.gate.dynamic_top_k
@@ -296,6 +302,7 @@ class FMoE(nn.Module):
             mask = self.mask.view(-1)
             moe_inp = tree.map_structure(delete_mask_func, moe_inp)
             gate_top_k_idx = gate_top_k_idx[mask == 0, :]
+            share_expert_k_list=share_expert_k_list[mask == 0, :]
 
         fwd = _fmoe_general_global_forward(
             moe_inp,
@@ -305,18 +312,26 @@ class FMoE(nn.Module):
             self.world_size,
             experts=self.experts,
         )
-
+        share_mask = share_expert_k_list[:, 0] != 0
+        share_fwd = _fmoe_general_global_forward(
+            moe_inp[share_mask],
+            share_expert_k_list[share_mask],
+            self.expert_fn,
+            self.num_expert,
+            self.world_size,
+            experts=self.experts,
+        )
         # recover deleted tensors
         if self.mask is not None and self.mask_dict is not None:
 
-            def recover_func(tensor):
+            def recover_func(tensor,tok):
                 # to: (BxL') x top_k x dim
                 dim = tensor.shape[-1]
-                tensor = tensor.view(-1, self.top_k, dim)
+                tensor = tensor.view(-1, tok, dim)
                 # to: (BxL) x top_k x d_model
                 x = torch.zeros(
                     mask.shape[0],
-                    self.top_k,
+                    tok,
                     dim,
                     device=tensor.device,
                     dtype=tensor.dtype,
@@ -327,15 +342,18 @@ class FMoE(nn.Module):
                     x[mask == k] = v
                 return x
 
-            moe_outp = tree.map_structure(recover_func, fwd)
+            moe_outp = tree.map_structure(partial(recover_func,tok=self.top_k), fwd)
+            share_fwd = tree.map_structure(partial(recover_func, tok=self.share_expert_num), share_fwd)
         else:
 
-            def view_func(tensor):
+            def view_func(tensor,tok):
                 dim = tensor.shape[-1]
-                tensor = tensor.view(-1, self.top_k, dim)
+                tensor = tensor.view(-1, tok, dim)
                 return tensor
 
-            moe_outp = tree.map_structure(view_func, fwd)
+            moe_outp = tree.map_structure(partial(view_func, tok=self.top_k), fwd)
+            share_fwd = tree.map_structure(partial(view_func, tok=self.share_expert_num), share_fwd)
+
 
         gate_score = gate_score.view(-1, 1, self.top_k)
 
@@ -344,8 +362,12 @@ class FMoE(nn.Module):
             tensor = torch.bmm(gate_score, tensor).reshape(-1, dim)
             return tensor
 
-        moe_outp = tree.map_structure(bmm_func, moe_outp)
-
+        moe_tok_outp = tree.map_structure(bmm_func, moe_outp[:,:self.top_k,:])
+        moe_tok_outp=moe_tok_outp.unsqueeze(1)
+        share_out=torch.zeros(moe_inp.shape[0],self.share_expert_num,share_fwd.shape[-1]).to(moe_inp.device)
+        share_out[share_mask,:] = share_fwd
+        sg=self.sigmoid_mlp(torch.cat((moe_tok_outp, share_out),dim=1))
+        moe_outp=moe_tok_outp.squeeze(1)*sg+(1-sg)*share_out.squeeze(1)
         if self.slice_size > 1:
 
             def all_gather_func(tensor):
