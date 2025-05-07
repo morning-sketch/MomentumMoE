@@ -133,6 +133,7 @@ def launch(
                 val_data,
                 model_params["block_size"],
                 model_params["hidden_size"],
+                trainer_params["batch_split"],
             )
             loss_test = full_eval(
                 model,
@@ -141,6 +142,7 @@ def launch(
                 test_data,
                 model_params["block_size"],
                 model_params["hidden_size"],
+                trainer_params["batch_split"],
             )
             if distributed:
                 # collect results into rank0

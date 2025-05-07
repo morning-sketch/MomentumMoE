@@ -5,48 +5,110 @@ import torch
 import tqdm
 
 
-def _tokenize(text_path, dictionary_to_update):
-    """Tokenizes a text file."""
-    print("Tokenizing {}".format(text_path))
-    assert os.path.exists(text_path)
+# def _tokenize(text_path, dictionary_to_update):
+#     """Tokenizes a text file."""
+#     print("Tokenizing {}".format(text_path))
+#     assert os.path.exists(text_path)
+#
+#     nb_tokens_in_dictionary = len(dictionary_to_update)
+#
+#     # Count nb of tokens in text and update the dictionary
+#     with open(text_path, "r", encoding="utf8") as f:
+#         for line in f:
+#             tokens = line.split() + ["<eos>"]
+#             for token in tokens:
+#                 if token not in dictionary_to_update:
+#                     dictionary_to_update[token] = nb_tokens_in_dictionary
+#                     nb_tokens_in_dictionary += 1
+#
+#     # Assign to each token its identifier
+#     ids = []
+#     with open(text_path, "r", encoding="utf8") as f:
+#         for line in f:
+#             tokens = line.split() + ["<eos>"]
+#             for token in tokens:
+#                 ids.append(dictionary_to_update[token])
+#     ids = torch.LongTensor(ids)
+#     return ids
+#
+#
+# class Corpus:
+#     def __init__(self, data_path):
+#         self._dictionary = {}
+#         self.train = _tokenize(
+#             text_path=os.path.join(data_path, "train.txt"),
+#             dictionary_to_update=self._dictionary,
+#         )
+#         self.valid = _tokenize(
+#             text_path=os.path.join(data_path, "valid.txt"),
+#             dictionary_to_update=self._dictionary,
+#         )
+#         self.test = _tokenize(
+#             text_path=os.path.join(data_path, "test.txt"),
+#             dictionary_to_update=self._dictionary,
+#         )
+#
+#     @property
+#     def vocab_size(self):
+#         return len(self._dictionary)
+
+import json
+
+
+# ... existing imports ...
+
+def _tokenize(json_path, dictionary_to_update):
+    """Tokenizes a json file containing text entries."""
+    print("Tokenizing {}".format(json_path))
+    assert os.path.exists(json_path)
 
     nb_tokens_in_dictionary = len(dictionary_to_update)
+    ids = []
 
-    # Count nb of tokens in text and update the dictionary
-    with open(text_path, "r", encoding="utf8") as f:
-        for line in f:
-            tokens = line.split() + ["<eos>"]
+    # Process JSON file and update dictionary
+    with open(json_path, "r", encoding="utf8") as f:
+        data = json.load(f)
+        for item in data:
+            tokens = item["text"].split() + ["<eos>"]
             for token in tokens:
                 if token not in dictionary_to_update:
                     dictionary_to_update[token] = nb_tokens_in_dictionary
                     nb_tokens_in_dictionary += 1
-
-    # Assign to each token its identifier
-    ids = []
-    with open(text_path, "r", encoding="utf8") as f:
-        for line in f:
-            tokens = line.split() + ["<eos>"]
-            for token in tokens:
                 ids.append(dictionary_to_update[token])
-    ids = torch.LongTensor(ids)
-    return ids
+
+    return torch.LongTensor(ids)
 
 
 class Corpus:
-    def __init__(self, data_path):
+    def __init__(self, data_path, split_ratio=(0.9, 0.1)):
         self._dictionary = {}
-        self.train = _tokenize(
-            text_path=os.path.join(data_path, "train.txt"),
-            dictionary_to_update=self._dictionary,
-        )
-        self.valid = _tokenize(
-            text_path=os.path.join(data_path, "valid.txt"),
-            dictionary_to_update=self._dictionary,
-        )
-        self.test = _tokenize(
-            text_path=os.path.join(data_path, "test.txt"),
-            dictionary_to_update=self._dictionary,
-        )
+        with open(os.path.join(data_path, "train.json"), "r", encoding="utf8") as f:
+            all_data = json.load(f)
+
+        # Split data into train/valid/test
+        random.shuffle(all_data)
+        train_end = int(len(all_data) * split_ratio[0])
+
+        # Save split data to temporary files
+        def _save_split(data, path):
+            with open(path, "w", encoding="utf8") as f:
+                json.dump(data, f, ensure_ascii=False)
+
+        train_path = os.path.join(data_path, "train_temp.json")
+        valid_path = os.path.join(data_path, "valid_temp.json")
+        test_path = os.path.join(data_path, "test.json")
+
+        _save_split(all_data[:train_end], train_path)
+        _save_split(all_data[train_end:], valid_path)
+
+        # Tokenize each split
+        self.train = _tokenize(train_path, self._dictionary)
+        self.valid = _tokenize(valid_path, self._dictionary)
+        self.test = _tokenize(test_path, self._dictionary)
+
+        # Clean up temporary files
+        os.remove(train_path)
+        os.remove(valid_path)
 
     @property
     def vocab_size(self):
