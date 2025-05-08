@@ -3,7 +3,7 @@ import argparse
 import math, random
 import torch
 import tqdm
-
+from torch.utils.data import Dataset
 
 # def _tokenize(text_path, dictionary_to_update):
 #     """Tokenizes a text file."""
@@ -115,10 +115,16 @@ class Corpus:
         return len(self._dictionary)
 
 
-def _batchify(data_tensor, batch_size):
-    nb_batches = data_tensor.size(0) // batch_size
-    # trim away some tokens to make whole batches
-    data_tensor = data_tensor.narrow(0, 0, nb_batches * batch_size)
+def _batchify(data_tensor, batch_size, block_size):
+    # 确保总长度可以被batch_size * block_size整除
+    total_elements = data_tensor.size(0)
+    chunk_size = batch_size * block_size
+    nb_chunks = total_elements // chunk_size
+
+    # 修剪数据以形成完整的块
+    data_tensor = data_tensor.narrow(0, 0, nb_chunks * chunk_size)
+
+    # 重新整形为(batch_size, -1)并确保第二维可以被block_size整除
     data_tensor = data_tensor.view(batch_size, -1).contiguous()
     return data_tensor
 
@@ -156,6 +162,80 @@ def _get_train_val_test_data(corpus, batch_size):
         _batchify(corpus.test, batch_size),
     ]
 
+def acc_tokenize(data_x,data_y, dictionary_to_update, block_size):
+
+    nb_tokens_in_dictionary = len(dictionary_to_update)
+    ids_x = []
+    ids_y = []
+    for item1,item2 in zip(data_x,data_y):
+        tokens = item1.split()
+        if len(tokens) > block_size:
+            continue
+        padding_length = block_size - len(tokens)
+        tokens = ["<pad>"] * padding_length + tokens
+        for token in tokens:
+            if token not in dictionary_to_update:
+                dictionary_to_update[token] = nb_tokens_in_dictionary
+                nb_tokens_in_dictionary += 1
+            ids_x.append(dictionary_to_update[token])
+        token = item2
+        if token not in dictionary_to_update:
+            dictionary_to_update[token] = nb_tokens_in_dictionary
+            nb_tokens_in_dictionary += 1
+        for _ in range(block_size - 1):
+            ids_y.append(-100)
+        ids_y.append(dictionary_to_update[token])
+    return torch.LongTensor(ids_x),torch.LongTensor(ids_y)
+
+def read_and_process_json_test(file_path):
+    # 读取JSON文件
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    # 拼接text和label
+    X_list = [f"{item['text']}" for item in data]
+    Y_list = [f"{item['label']}" for item in data]
+
+    return X_list,Y_list
+
+def read_and_process_json_train(file_path):
+    # 读取JSON文件
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    # 拼接text和label
+    X_list = [f"{item['text'][:-1]}" for item in data]
+    Y_list = [f"{item['text'][-1]}" for item in data]
+
+    return X_list,Y_list
+
+def get_acc_data(data_params,env_params,block_size, batch_size,device):
+    train_path = os.path.join(data_params["data_path"], "train.json")
+    test_path = os.path.join(data_params["data_path"], "test.json")
+    train_x,train_y =read_and_process_json_train(train_path)
+    test_x,test_y =read_and_process_json_test(test_path)
+
+    _dictionary = {}
+    train_x,train_y = acc_tokenize(train_x,train_y, _dictionary, block_size)
+    test_x,test_y = acc_tokenize(test_x,test_y, _dictionary, block_size)
+
+    data_params["vocab_size"] = len(_dictionary)
+    train_x = _batchify(train_x, batch_size, block_size)
+    train_y = _batchify(train_y, batch_size, block_size)
+    test_x = _batchify(test_x, batch_size, block_size)
+    test_y = _batchify(test_y, batch_size, block_size)
+    split_point=int((int(0.9*train_x.shape[1])//block_size)*block_size)
+    val_x=train_x[:,split_point:]
+    val_y = train_y[:, split_point:]
+    train_x = train_x[:,:split_point]
+    train_y = train_y[:, :split_point]
+    train_x = train_x.to(device)
+    train_y = train_y.to(device)
+    val_x = val_x.to(device)
+    val_y = val_y.to(device)
+    test_x = test_x.to(device)
+    test_y = test_y.to(device)
+    return train_x,train_y,val_x,val_y,test_x,test_y
 
 def get_train_val_test_data(data_params, env_params, batch_size, device):
     corpus = _build_corpus(**data_params, env_params=env_params)

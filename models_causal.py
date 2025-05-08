@@ -124,8 +124,8 @@ class Causal_SeqAttention(nn.Module):
             self.adaptive_span = AdaptiveSpan(
                 attn_span=attn_span, **adapt_span_params, **kargs
             )
-        self.q_compress_mlp = CompressionMLP(n=block_size, c=cmp_size, d=1)
-        self.k_compress_mlp = CompressionMLP(n=block_size, c=cmp_size, d=1)
+        # self.q_compress_mlp = CompressionMLP(n=block_size, c=cmp_size, d=1)
+        # self.k_compress_mlp = CompressionMLP(n=block_size, c=cmp_size, d=1)
 
     def forward(self, query, key, value, key_pe):
         # query size = B x M x H
@@ -142,10 +142,11 @@ class Causal_SeqAttention(nn.Module):
         attn_cont = torch.matmul(query, key.transpose(-1, -2))
         attn_cont = _unskew(attn_cont)  # B x M x L
 
-        cmp_key=self.k_compress_mlp(key[:,-query.shape[1]:,:])
-        cmp_query=self.q_compress_mlp(query)
-        attn_cont_cmp = torch.matmul(cmp_query, cmp_key.transpose(-1, -2))
-        attn_weight=F.softmax(attn_cont_cmp/ math.sqrt(self.hidden_size), dim=-1)
+        # cmp_key=self.k_compress_mlp(key[:,-query.shape[1]:,:])
+        # cmp_query=self.q_compress_mlp(query)
+        # attn_cont_cmp = torch.matmul(cmp_query, cmp_key.transpose(-1, -2))
+        attn_weight=F.softmax(attn_cont[:,:,-attn_cont.shape[1]:]/ math.sqrt(self.hidden_size), dim=-1)
+        # attn_weight=F.softmax(attn_cont_cmp/ math.sqrt(self.hidden_size), dim=-1)
         # compute the effect of position embedding
         attn_pos = torch.matmul(query, key_pe)  # B x M x L_pos
         attn = attn_cont + attn_pos

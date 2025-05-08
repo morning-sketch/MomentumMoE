@@ -88,7 +88,8 @@ def train_iteration(
     load_balance,
     optimizer,
     scheduler,
-    data,
+    data_x,
+    data_y,
     nb_batches_per_iter,
     block_size,
     eval_only,
@@ -108,15 +109,15 @@ def train_iteration(
         # eval on fewer batches during training for speed-up
         nb_batches_per_iter_max = max(1, nb_batches_per_iter // 10)
         nb_batches_per_iter_max = min(
-            nb_batches_per_iter_max, math.ceil(data.size(1) / block_size)
+            nb_batches_per_iter_max, math.ceil(data_x.size(1) / block_size)
         )
 
     loss_all = 0
     actual_nb_batches_per_iter = 0
     for _ in tqdm.tqdm(range(nb_batches_per_iter_max)):
         actual_nb_batches_per_iter += 1
-        X = data[:, train_pos : train_pos + block_size].contiguous()
-        Y = data[:, train_pos + 1 : train_pos + block_size + 1].contiguous()
+        X = data_x[:, train_pos : train_pos + block_size].contiguous()
+        Y = data_y[:, train_pos: train_pos + block_size].contiguous()
 
         loss, h_cache = _train_batch(
             model=model,
@@ -131,7 +132,7 @@ def train_iteration(
         )
         loss_all += loss
         train_pos += block_size
-        if train_pos >= data.size(1) - block_size:
+        if train_pos >= data_x.size(1) - block_size:
             # reached the end. randomize the offset to reduce overfitting
             train_pos = random.randrange(block_size)
             # reset the cache
@@ -143,16 +144,16 @@ def train_iteration(
 
 
 # do full evaluation
-def full_eval(model, optimizer, scheduler, data, block_size, hidden_size, batch_split):
+def full_eval(model, optimizer, scheduler, data_x,data_y, block_size, hidden_size, batch_split,device):
     model.eval()
     train_pos = 0
-    nb_batches_per_iter_max = math.ceil(data.size(1) / block_size)
+    nb_batches_per_iter_max = math.ceil(data_x.size(1) / block_size)
     h_cache = [
         torch.zeros(
-            data.size(0),
+            data_x.size(0),
             model.module.layers[layer_i].attn.attn.get_cache_size(),
             hidden_size,
-        ).to(data.device)
+        ).to(device)
         for layer_i in range(model.module.attn_layer_count)
     ]
 
@@ -160,8 +161,8 @@ def full_eval(model, optimizer, scheduler, data, block_size, hidden_size, batch_
     actual_nb_batches_per_iter = 0
     for _ in tqdm.tqdm(range(nb_batches_per_iter_max)):
         actual_nb_batches_per_iter += 1
-        X = data[:, train_pos : train_pos + block_size].contiguous()
-        Y = data[:, train_pos + 1 : train_pos + block_size + 1].contiguous()
+        X = data_x[:, train_pos : train_pos + block_size].contiguous()
+        Y = data_y[:, train_pos : train_pos + block_size].contiguous()
 
         loss, h_cache = _train_batch(
             model=model,
@@ -176,7 +177,7 @@ def full_eval(model, optimizer, scheduler, data, block_size, hidden_size, batch_
         )
         loss_all += loss
         train_pos += block_size
-        if train_pos >= data.size(1) - block_size:
+        if train_pos >= data_x.size(1) - block_size:
             # Skip the remaining tokens as it can't make a whole block.
             # An effect on performance should be negligable for a large data.
             break

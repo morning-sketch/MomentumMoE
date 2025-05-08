@@ -9,7 +9,7 @@ import torch
 import time
 
 from config import PARAMS_CONFIG
-from data import get_train_val_test_data
+from data import get_train_val_test_data,get_acc_data
 from models_causal import CausalMoE
 from trainer import train_iteration, full_eval
 import datetime
@@ -58,9 +58,10 @@ def launch(
         print("adapt_span_params:\t", adapt_span_params)
 
     # DATA
-    train_data, val_data, test_data = get_train_val_test_data(
+    train_data_x,train_data_y, val_data_x,val_data_y, test_data_x,test_data_y = get_acc_data(
         data_params=data_params,
         env_params=env_params,
+        block_size=model_params["block_size"],
         batch_size=trainer_params["batch_size"],
         device=device,
     )
@@ -108,15 +109,36 @@ def launch(
         f"Total of Trainable Parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
     )
     # resume training from last checkpoint if exists
-    iter_init = load_checkpoint(
-        trainer_params["checkpoint_path"],
-        model,
-        optimizer,
-        scheduler,
-        logger,
-        distributed,
-        resume,
-    )
+    if not trainer_params["full_eval_mode"]:
+        with open(trainer_params["pretrained_weight"], "rb") as f:
+            pretrained_model = torch.load(f)
+        # pdb.set_trace()
+        pretrained_model_checkpoint = pretrained_model["model"]  # .state_dict()
+        filtered_checkpoint = {}
+        for key in pretrained_model_checkpoint.keys():
+            if not key in model.state_dict():
+                logging("Can not load {}".format(key))
+            elif (
+                    not pretrained_model_checkpoint[key].shape
+                        == model.state_dict()[key].shape
+            ):
+                logging("Can not load {}, shape do not match".format(key))
+            else:
+                filtered_checkpoint[key] = pretrained_model_checkpoint[key]
+
+        model.load_state_dict(filtered_checkpoint, strict=False)
+        iter_init = 0
+
+    else:
+        # resume training from last checkpoint if exists
+        iter_init = load_checkpoint(
+            trainer_params["checkpoint_path"],
+            model,
+            optimizer,
+            scheduler,
+            logger,
+            distributed,
+        )
     # fix gate
     if model_params["smoe_dropout"]:
         freeze_gate_weight(model)
@@ -130,19 +152,23 @@ def launch(
                 model,
                 optimizer,
                 scheduler,
-                val_data,
+                val_data_x,
+                val_data_y,
                 model_params["block_size"],
                 model_params["hidden_size"],
                 trainer_params["batch_split"],
+                env_params["device"],
             )
             loss_test = full_eval(
                 model,
                 optimizer,
                 scheduler,
-                test_data,
+                test_data_x,
+                test_data_y,
                 model_params["block_size"],
                 model_params["hidden_size"],
                 trainer_params["batch_split"],
+                env_params["device"],
             )
             if distributed:
                 # collect results into rank0
@@ -171,7 +197,7 @@ def launch(
     hid_cache = [
         [
             torch.zeros(
-                train_data.size(0),
+                train_data_x.size(0),
                 model.module.layers[layer_i].attn.attn.get_cache_size(),
                 model_params["hidden_size"],
             ).to(device)
@@ -194,7 +220,8 @@ def launch(
             model_params["load_balance"],
             optimizer,
             scheduler,
-            train_data,
+            train_data_x,
+            train_data_y,
             nb_batches_per_iter,
             model_params["block_size"],
             False,
@@ -210,7 +237,8 @@ def launch(
                 model_params["load_balance"],
                 optimizer,
                 scheduler,
-                val_data,
+                val_data_x,
+                val_data_y,
                 nb_batches_per_iter,
                 model_params["block_size"],
                 True,
