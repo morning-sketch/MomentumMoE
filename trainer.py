@@ -12,8 +12,24 @@ def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
 
     out, h_cache = model(X, h_cache)
     out = out.view(-1, out.size(-1))
-    loss = torch.nn.functional.nll_loss(out, Y.view(-1))
+
+    # 获取预测类别 (out中最大概率的索引)
+    preds = out.argmax(dim=1)
+    # 展平Y并过滤掉-100
+    y_flat = Y.view(-1)
+    mask = y_flat != -100
+
+    # 计算统计值
+    correct = (preds[mask] == y_flat[mask]).sum().item()
+
+    # 计算比值 (避免除以0)
+    ratio = correct / (mask.sum().item()) if incorrect > 0 else float('inf')
+
+    loss = torch.nn.functional.nll_loss(out, y_flat)
     loss_value = loss.item() / loss_div
+
+    # 打印统计信息 (调试用)
+    print(f"正确预测: {correct}, 准确率: {ratio:.2f}")
 
     if not eval_only:
         # loss term from adaptive-span
@@ -33,7 +49,7 @@ def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
                         balance_loss += m.loss
             loss += load_balance * balance_loss
         (loss / loss_div).backward(retain_graph=True)
-    return loss_value, h_cache
+    return loss_value, h_cache,ratio
 
 
 def _train_batch(
@@ -45,17 +61,18 @@ def _train_batch(
 
     if batch_split == 1:
         # process a batch in a single step (default behaviour)
-        loss_value, h_cache = _train_step(model, load_balance, X, Y, h_cache, eval_only)
+        loss_value, h_cache,radio_value = _train_step(model, load_balance, X, Y, h_cache, eval_only)
     else:
         # split a batch into multiple pieces that each can fit in memory
         assert X.size(0) % batch_split == 0
         split_size = X.size(0) // batch_split
         loss_value = 0
+        radio_value=0
         h_cache_list = []
         for split_ind in range(batch_split):
             split_slice = slice(split_ind * split_size, (split_ind + 1) * split_size)
             split_h_cache = [h[split_slice, :, :] for h in h_cache]
-            split_loss_value, split_h_cache = _train_step(
+            split_loss_value, split_h_cache,radio = _train_step(
                 model,
                 load_balance,
                 X[split_slice, :],
@@ -65,11 +82,13 @@ def _train_batch(
                 batch_split,
             )
             loss_value += split_loss_value
+            radio_value+=radio
             h_cache_list.append(split_h_cache)
         h_cache = [
             torch.cat([h_cache_list[i][l] for i in range(batch_split)], dim=0)
             for l in range(len(h_cache))
         ]
+        radio_value/=batch_split
     if not eval_only:
         if scheduler is not None:
             scheduler.step()
@@ -80,7 +99,7 @@ def _train_batch(
             for layer in model.module.layers:
                 if layer.use_attn:
                     layer.attn.attn.adaptive_span.clamp_param()
-    return loss_value, h_cache
+    return loss_value, h_cache,radio_value
 
 
 def train_iteration(
@@ -114,12 +133,13 @@ def train_iteration(
 
     loss_all = 0
     actual_nb_batches_per_iter = 0
+    radio_all=0
     for _ in tqdm.tqdm(range(nb_batches_per_iter_max)):
         actual_nb_batches_per_iter += 1
         X = data_x[:, train_pos : train_pos + block_size].contiguous()
         Y = data_y[:, train_pos: train_pos + block_size].contiguous()
 
-        loss, h_cache = _train_batch(
+        loss, h_cache,radio = _train_batch(
             model=model,
             load_balance=load_balance,
             optimizer=optimizer,
@@ -132,15 +152,16 @@ def train_iteration(
         )
         loss_all += loss
         train_pos += block_size
+        radio_all+=radio
         if train_pos >= data_x.size(1) - block_size:
             # reached the end. randomize the offset to reduce overfitting
             train_pos = random.randrange(block_size)
             # reset the cache
             for h in h_cache:
                 h.fill_(0)
-
+    radio_all/=actual_nb_batches_per_iter
     loss_all = loss_all / actual_nb_batches_per_iter
-    return loss_all, train_pos, h_cache
+    return loss_all, train_pos, h_cache,radio_all
 
 
 # do full evaluation
@@ -158,13 +179,14 @@ def full_eval(model, optimizer, scheduler, data_x,data_y, block_size, hidden_siz
     ]
 
     loss_all = 0
+    radio_all=0
     actual_nb_batches_per_iter = 0
     for _ in tqdm.tqdm(range(nb_batches_per_iter_max)):
         actual_nb_batches_per_iter += 1
         X = data_x[:, train_pos : train_pos + block_size].contiguous()
         Y = data_y[:, train_pos : train_pos + block_size].contiguous()
 
-        loss, h_cache = _train_batch(
+        loss, h_cache ,radio= _train_batch(
             model=model,
             load_balance=0,
             optimizer=optimizer,
@@ -177,10 +199,11 @@ def full_eval(model, optimizer, scheduler, data_x,data_y, block_size, hidden_siz
         )
         loss_all += loss
         train_pos += block_size
+        radio_all+=radio
         if train_pos >= data_x.size(1) - block_size:
             # Skip the remaining tokens as it can't make a whole block.
             # An effect on performance should be negligable for a large data.
             break
-
+    radio_all/=actual_nb_batches_per_iter
     loss_all = loss_all / actual_nb_batches_per_iter
-    return loss_all
+    return loss_all,radio_all

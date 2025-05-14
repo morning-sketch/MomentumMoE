@@ -148,7 +148,7 @@ def launch(
     if trainer_params["full_eval_mode"]:
         # evaluate the model on test data
         with torch.no_grad():
-            loss_val = full_eval(
+            loss_val,radio_val = full_eval(
                 model,
                 optimizer,
                 scheduler,
@@ -159,7 +159,7 @@ def launch(
                 trainer_params["batch_split"],
                 env_params["device"],
             )
-            loss_test = full_eval(
+            loss_test,radio_test = full_eval(
                 model,
                 optimizer,
                 scheduler,
@@ -186,9 +186,11 @@ def launch(
             ):
                 logging("Val: {:.3f} BPC".format(loss_val / math.log(2)))
                 logging("Test: {:.3f} BPC".format(loss_test / math.log(2)))
+                logging("Test: {:.3f} %".format(radio_val))
             else:
                 logging("Val: {:.3f} PPL".format(math.exp(loss_val)))
                 logging("Test: {:.3f} PPL".format(math.exp(loss_test)))
+                logging("Test: {:.3f} %".format(radio_test))
         return
 
     # position of current batch
@@ -215,7 +217,7 @@ def launch(
 
         # time storing
         t_sta = time.time()
-        loss_train, data_pos[0], hid_cache[0] = train_iteration(
+        loss_train, data_pos[0], hid_cache[0],radio_train = train_iteration(
             model,
             model_params["load_balance"],
             optimizer,
@@ -232,7 +234,7 @@ def launch(
         )
         elapsed = 1000 * (time.time() - t_sta) / nb_batches_per_iter
         with torch.no_grad():
-            loss_val, data_pos[1], hid_cache[1] = train_iteration(
+            loss_val, data_pos[1], hid_cache[1],radio_val = train_iteration(
                 model,
                 model_params["load_balance"],
                 optimizer,
@@ -261,21 +263,25 @@ def launch(
         if ("enwik8" in data_params["data_path"]) or (
             "text8" in data_params["data_path"]
         ):
-            msg_result = "Epochs: {} | loss_train: {:.3f} ~ {:.3f} BPC | loss_val: {:.3f} ~ {:.3f} BPC | elapsed: {:.1f}".format(
+            msg_result = "Epochs: {} | loss_train: {:.3f} ~ {:.3f} BPC radio_train:{:.3f}% | loss_val: {:.3f} ~ {:.3f} BPC radio_val:{:.3f}% | elapsed: {:.1f}".format(
                 iter_no,
                 loss_train,
+                radio_train,
                 float(loss_train / math.log(2)),
                 loss_val,
                 float(loss_val / math.log(2)),
+                radio_val,
                 elapsed,
             )
         else:
-            msg_result = "Epochs: {} | loss_train: {:.3f} ~ {:.3f} PPL | loss_val: {:.3f} ~ {:.3f} PPL | elapsed: {:.1f}".format(
+            msg_result = "Epochs: {} | loss_train: {:.3f} ~ {:.3f} PPL radio_train:{:.3f}% | loss_val: {:.3f} ~ {:.3f} PPL  radio_val:{:.3f}% | elapsed: {:.1f}".format(
                 iter_no,
                 loss_train,
+                radio_train,
                 float(math.exp(loss_train)),
                 loss_val,
                 float(math.exp(loss_val)),
+                radio_val,
                 elapsed,
             )
         logging(msg_result)
