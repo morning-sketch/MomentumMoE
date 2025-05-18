@@ -23,7 +23,7 @@ def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
     correct = (preds[mask] == y_flat[mask]).sum().item()
 
     # 计算比值 (避免除以0)
-    ratio = correct / (mask.sum().item()) if incorrect > 0 else float('inf')
+    ratio = correct / (mask.sum().item())
 
     loss = torch.nn.functional.nll_loss(out, y_flat)
     loss_value = loss.item() / loss_div

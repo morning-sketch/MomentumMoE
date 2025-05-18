@@ -138,6 +138,7 @@ def launch(
             scheduler,
             logger,
             distributed,
+            resume,
         )
     # fix gate
     if model_params["smoe_dropout"]:
@@ -186,11 +187,11 @@ def launch(
             ):
                 logging("Val: {:.3f} BPC".format(loss_val / math.log(2)))
                 logging("Test: {:.3f} BPC".format(loss_test / math.log(2)))
-                logging("Test: {:.3f} %".format(radio_val))
+                logging("Test: {:.3f} %".format(radio_val*100))
             else:
                 logging("Val: {:.3f} PPL".format(math.exp(loss_val)))
                 logging("Test: {:.3f} PPL".format(math.exp(loss_test)))
-                logging("Test: {:.3f} %".format(radio_test))
+                logging("Test: {:.3f} %".format(radio_test*100))
         return
 
     # position of current batch
@@ -265,23 +266,23 @@ def launch(
         ):
             msg_result = "Epochs: {} | loss_train: {:.3f} ~ {:.3f} BPC radio_train:{:.3f}% | loss_val: {:.3f} ~ {:.3f} BPC radio_val:{:.3f}% | elapsed: {:.1f}".format(
                 iter_no,
-                loss_train,
-                radio_train,
+                loss_train*100,
                 float(loss_train / math.log(2)),
+                radio_train,
                 loss_val,
                 float(loss_val / math.log(2)),
-                radio_val,
+                radio_val*100,
                 elapsed,
             )
         else:
             msg_result = "Epochs: {} | loss_train: {:.3f} ~ {:.3f} PPL radio_train:{:.3f}% | loss_val: {:.3f} ~ {:.3f} PPL  radio_val:{:.3f}% | elapsed: {:.1f}".format(
                 iter_no,
                 loss_train,
-                radio_train,
                 float(math.exp(loss_train)),
+                radio_train*100,
                 loss_val,
                 float(math.exp(loss_val)),
-                radio_val,
+                radio_val*100,
                 elapsed,
             )
         logging(msg_result)
