@@ -5,7 +5,131 @@ import torch
 import tqdm
 from torch.utils.data import Dataset
 
-# def _tokenize(text_path, dictionary_to_update):
+import json
+from transformers import PreTrainedTokenizer
+
+
+class ACCPreTrainedTokenizer(PreTrainedTokenizer):
+    """自定义tokenizer类，继承自Hugging Face的PreTrainedTokenizer"""
+
+    # 定义特殊token
+    pad_token = "<pad>"
+    unk_token = "<unk>"
+    additional_special_tokens = []
+
+    def __init__(
+            self,
+            vocab=None,
+            pad_token="<pad>",
+            unk_token="<unk>",
+            **kwargs
+    ):
+        # 确保vocab始终是字典
+        if vocab is None:
+            self.vocab = {}
+        else :
+            self.vocab = vocab
+        super().__init__(pad_token=pad_token, unk_token=unk_token, **kwargs)
+
+        self.ids_to_tokens = {v: k for k, v in self.vocab.items()}
+
+        # 设置特殊token的ID
+        self.pad_token_id = self.vocab.get(pad_token, 0)
+        self.unk_token_id = self.vocab.get(unk_token, 1)
+
+    @property
+    def vocab_size(self) -> int:
+        """返回词汇表大小"""
+        return len(self.vocab)
+
+    def _tokenize(self, text: str):
+        """将文本拆分为token列表"""
+        return text.split()
+
+    def _convert_token_to_id(self, token):
+        """将token转换为ID"""
+        return self.vocab.get(token, self.unk_token_id)
+
+    def _convert_id_to_token(self, index):
+        """将ID转换为token"""
+        return self.ids_to_tokens.get(index, self.unk_token)
+
+    def save_vocabulary(self, save_directory: str, filename_prefix: str = None):
+        """保存词汇表到文件"""
+        if not os.path.isdir(save_directory):
+            os.makedirs(save_directory)
+
+        # 构建完整的文件名
+        if filename_prefix is not None:
+            vocab_file = os.path.join(save_directory, f"{filename_prefix}-vocab.json")
+        else:
+            vocab_file = os.path.join(save_directory, "vocab.json")
+
+        # 保存词汇表
+        with open(vocab_file, 'w', encoding='utf-8') as f:
+            json.dump(self.vocab, f, ensure_ascii=False)
+
+        return (vocab_file,)
+
+    @classmethod
+    def from_vocabulary(cls, vocab, **kwargs):
+        """从词汇表创建tokenizer实例"""
+        return cls(vocab=vocab, **kwargs)
+
+    def build_inputs_with_special_tokens(self, token_ids_0, token_ids_1=None):
+        """添加特殊token到输入中"""
+        return token_ids_0
+
+    def get_special_tokens_mask(self, token_ids_0, token_ids_1=None, already_has_special_tokens=False):
+        """返回特殊token的掩码"""
+        return [0] * len(token_ids_0)
+
+    def create_token_type_ids_from_sequences(self, token_ids_0, token_ids_1=None):
+        """创建token类型ID"""
+        return [0] * len(token_ids_0)
+
+    def get_vocab(self):
+        """返回完整词汇表字典"""
+        return self.vocab.copy()
+
+    def __getstate__(self):
+        """序列化tokenizer时调用"""
+        state = self.__dict__.copy()
+        return state
+
+    def __setstate__(self, d):
+        """反序列化tokenizer时调用"""
+        self.__dict__ = d
+        self.ids_to_tokens = {v: k for k, v in self.vocab.items()}
+
+    @classmethod
+    def _from_pretrained(cls, pretrained_model_name_or_path, *init_inputs, **kwargs):
+        """从保存的文件加载tokenizer"""
+        # 获取保存目录
+        if os.path.isdir(pretrained_model_name_or_path):
+            vocab_file = os.path.join(pretrained_model_name_or_path, "vocab.json")
+        else:
+            raise ValueError(f"未找到保存的tokenizer目录: {pretrained_model_name_or_path}")
+
+        # 加载词汇表
+        try:
+            with open(vocab_file, 'r', encoding='utf-8') as f:
+                vocab = json.load(f)
+        except FileNotFoundError:
+            raise ValueError(f"未找到词汇表文件: {vocab_file}")
+
+        # 加载配置（从kwargs中获取或使用默认值）
+        config = kwargs.pop("config", None)
+        if config and hasattr(config, "tokenizer_class") and config.tokenizer_class != cls.__name__:
+            raise ValueError(
+                f"配置中的tokenizer类({config.tokenizer_class})与当前类({cls.__name__})不匹配"
+            )
+
+        # 创建tokenizer实例
+        return cls(vocab=vocab, *init_inputs, **kwargs)
+
+
+        # def _tokenize(text_path, dictionary_to_update):
 #     """Tokenizes a text file."""
 #     print("Tokenizing {}".format(text_path))
 #     assert os.path.exists(text_path)
@@ -162,8 +286,8 @@ def _get_train_val_test_data(corpus, batch_size):
         _batchify(corpus.test, batch_size),
     ]
 
-def acc_tokenize(data_x,data_y, dictionary_to_update, block_size):
-
+def acc_tokenize(data_x,data_y, tokenizer, block_size):
+    dictionary_to_update = tokenizer.get_vocab()
     nb_tokens_in_dictionary = len(dictionary_to_update)
     ids_x = []
     ids_y = []
@@ -172,19 +296,24 @@ def acc_tokenize(data_x,data_y, dictionary_to_update, block_size):
         if len(tokens) > block_size:
             continue
         padding_length = block_size - len(tokens)
-        tokens = ["<pad>"] * padding_length + tokens
+        tokens = ["<eos>"] * padding_length + tokens
         for token in tokens:
             if token not in dictionary_to_update:
-                dictionary_to_update[token] = nb_tokens_in_dictionary
-                nb_tokens_in_dictionary += 1
-            ids_x.append(dictionary_to_update[token])
+                # dictionary_to_update[token] = nb_tokens_in_dictionary
+                # nb_tokens_in_dictionary += 1
+                ids_x.append(dictionary_to_update["<eos>"])
+            else :
+                ids_x.append(dictionary_to_update[token])
         token = item2
-        if token not in dictionary_to_update:
-            dictionary_to_update[token] = nb_tokens_in_dictionary
-            nb_tokens_in_dictionary += 1
         for _ in range(block_size - 1):
             ids_y.append(-100)
-        ids_y.append(dictionary_to_update[token])
+        if token not in dictionary_to_update:
+            # dictionary_to_update[token] = nb_tokens_in_dictionary
+            # nb_tokens_in_dictionary += 1
+            ids_y.append(dictionary_to_update["<eos>"])
+        else :
+            ids_y.append(dictionary_to_update[token])
+    tokenizer.vocab = dictionary_to_update
     return torch.LongTensor(ids_x),torch.LongTensor(ids_y)
 
 def read_and_process_json_test(file_path):
@@ -215,11 +344,11 @@ def get_acc_data(data_params,env_params,block_size, batch_size,device):
     train_x,train_y =read_and_process_json_train(train_path)
     test_x,test_y =read_and_process_json_test(test_path)
 
-    _dictionary = {}
-    train_x,train_y = acc_tokenize(train_x,train_y, _dictionary, block_size)
-    test_x,test_y = acc_tokenize(test_x,test_y, _dictionary, block_size)
+    tokenizer = ACCPreTrainedTokenizer._from_pretrained("my_custom_tokenizer")
+    train_x,train_y = acc_tokenize(train_x,train_y, tokenizer, block_size)
+    test_x,test_y = acc_tokenize(test_x,test_y, tokenizer, block_size)
 
-    data_params["vocab_size"] = len(_dictionary)
+    data_params["vocab_size"] = len(tokenizer.vocab)
     train_x = _batchify(train_x, batch_size, block_size)
     train_y = _batchify(train_y, batch_size, block_size)
     test_x = _batchify(test_x, batch_size, block_size)
