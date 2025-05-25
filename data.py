@@ -353,11 +353,11 @@ def get_acc_data(data_params,env_params,block_size, batch_size,device):
     train_y = _batchify(train_y, batch_size, block_size)
     test_x = _batchify(test_x, batch_size, block_size)
     test_y = _batchify(test_y, batch_size, block_size)
-    split_point=int((int(0.9*train_x.shape[1])//block_size)*block_size)
+    split_point=int((int(0.97*train_x.shape[1])//block_size)*block_size)
     val_x=train_x[:,split_point:]
     val_y = train_y[:, split_point:]
-    train_x = train_x[:,:split_point]
-    train_y = train_y[:, :split_point]
+    # train_x = train_x[:,:split_point]
+    # train_y = train_y[:, :split_point]
     train_x = train_x.to(device)
     train_y = train_y.to(device)
     val_x = val_x.to(device)

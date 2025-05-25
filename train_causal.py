@@ -93,7 +93,8 @@ def launch(
 
     # create logger
     logger = Logger()
-    fold_name = trainer_params["checkpoint_path"].split("/")[-1].split(".")[0]
+    # fold_name = trainer_params["checkpoint_path"].split("/")[-1].split(".")[0]
+    fold_name = data_params["data_path"].split("/")[-2]
     folder_path = "/".join(trainer_params["checkpoint_path"].split("/")[:-1])
     logging = create_exp_dir(f"{folder_path}/experiments/{fold_name}")
     # log paramters
@@ -149,17 +150,17 @@ def launch(
     if trainer_params["full_eval_mode"]:
         # evaluate the model on test data
         with torch.no_grad():
-            loss_val,radio_val = full_eval(
-                model,
-                optimizer,
-                scheduler,
-                val_data_x,
-                val_data_y,
-                model_params["block_size"],
-                model_params["hidden_size"],
-                trainer_params["batch_split"],
-                env_params["device"],
-            )
+            # loss_val,radio_val = full_eval(
+            #     model,
+            #     optimizer,
+            #     scheduler,
+            #     val_data_x,
+            #     val_data_y,
+            #     model_params["block_size"],
+            #     model_params["hidden_size"],
+            #     trainer_params["batch_split"],
+            #     env_params["device"],
+            # )
             loss_test,radio_test = full_eval(
                 model,
                 optimizer,
@@ -171,25 +172,25 @@ def launch(
                 trainer_params["batch_split"],
                 env_params["device"],
             )
-            if distributed:
-                # collect results into rank0
-                stats = torch.tensor([loss_val, loss_test]).to(device)
-                torch.distributed.reduce(stats, 0)
-                if env_params["rank"] == 0:
-                    loss_val = stats[0] / env_params["world_size"]
-                    loss_test = stats[1] / env_params["world_size"]
-                else:
-                    return
+            # if distributed:
+            #     # collect results into rank0
+            #     stats = torch.tensor([loss_val, loss_test]).to(device)
+            #     torch.distributed.reduce(stats, 0)
+            #     if env_params["rank"] == 0:
+            #         loss_val = stats[0] / env_params["world_size"]
+            #         loss_test = stats[1] / env_params["world_size"]
+            #     else:
+            #         return
 
             # print('Test BPC: {:.4f}'.format(loss_test / math.log(2)))
             if ("enwik8" in data_params["data_path"]) or (
                 "text8" in data_params["data_path"]
             ):
-                logging("Val: {:.3f} BPC".format(loss_val / math.log(2)))
+                # logging("Val: {:.3f} BPC".format(loss_val / math.log(2)))
                 logging("Test: {:.3f} BPC".format(loss_test / math.log(2)))
                 logging("Test: {:.3f} %".format(radio_val*100))
             else:
-                logging("Val: {:.3f} PPL".format(math.exp(loss_val)))
+                # logging("Val: {:.3f} PPL".format(math.exp(loss_val)))
                 logging("Test: {:.3f} PPL".format(math.exp(loss_test)))
                 logging("Test: {:.3f} %".format(radio_test*100))
         return

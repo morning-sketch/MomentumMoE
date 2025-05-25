@@ -5,7 +5,7 @@ import torch
 import tqdm
 
 from custom_gates import *
-
+from data import ACCPreTrainedTokenizer
 
 def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
     """Single training step."""
@@ -20,8 +20,13 @@ def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
     mask = y_flat != -100
 
     # 计算统计值
-    correct = (preds[mask] == y_flat[mask]).sum().item()
-
+    trick = {'1': 'A', '2': 'B', '3': 'C', '4': 'D', 'A': '1', 'B': '2', 'C': '3', 'D': '4'}
+    tokenizer = ACCPreTrainedTokenizer._from_pretrained("my_custom_tokenizer")
+    correct=0
+    for i,j in zip(preds[mask],y_flat[mask]):
+        if i==j or(tokenizer._convert_id_to_token(i) in trick and trick[tokenizer._convert_id_to_token(i)]==tokenizer._convert_id_to_token(j))  or (tokenizer._convert_id_to_token(j) in trick and trick[tokenizer._convert_id_to_token(j)]==tokenizer._convert_id_to_token(i)):
+            correct+=1
+    # correct = (preds[mask] == y_flat[mask]).sum().item()
     # 计算比值 (避免除以0)
     ratio = correct / (mask.sum().item())
 
