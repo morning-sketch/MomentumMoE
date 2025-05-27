@@ -133,27 +133,47 @@ def _tokenize(text_path, tokenizer):
     ids = torch.LongTensor(ids)
     return ids
 
-
 class Corpus:
     def __init__(self, data_path):
         tokenizer = ACCPreTrainedTokenizer()
         self.train = _tokenize(
             tokenizer=tokenizer,
-            text_path=os.path.join(data_path, "train.txt"),
+            text_path=os.path.join(data_path, "train.parquet"),
         )
         self.valid = _tokenize(
             tokenizer=tokenizer,
-            text_path=os.path.join(data_path, "valid.txt"),
+            text_path=os.path.join(data_path, "valid.parquet"),
         )
         self.test = _tokenize(
             tokenizer=tokenizer,
-            text_path=os.path.join(data_path, "test.txt"),
+            text_path=os.path.join(data_path, "test.parquet"),
         )
 
     tokenizer.save_pretrained("my_custom_tokenizer")
     @property
     def vocab_size(self):
         return len(self._dictionary)
+
+# class Corpus:
+#     def __init__(self, data_path):
+#         tokenizer = ACCPreTrainedTokenizer()
+#         self.train = _tokenize(
+#             tokenizer=tokenizer,
+#             text_path=os.path.join(data_path, "train.txt"),
+#         )
+#         self.valid = _tokenize(
+#             tokenizer=tokenizer,
+#             text_path=os.path.join(data_path, "valid.txt"),
+#         )
+#         self.test = _tokenize(
+#             tokenizer=tokenizer,
+#             text_path=os.path.join(data_path, "test.txt"),
+#         )
+#
+#     tokenizer.save_pretrained("my_custom_tokenizer")
+#     @property
+#     def vocab_size(self):
+#         return len(self._dictionary)
 
 
 def _batchify(data_tensor, batch_size):
