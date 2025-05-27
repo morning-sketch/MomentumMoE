@@ -110,6 +110,10 @@ def train_iteration(
         nb_batches_per_iter_max = min(
             nb_batches_per_iter_max, math.ceil(data.size(1) / block_size)
         )
+    else:
+        nb_batches_per_iter_max = min(
+            nb_batches_per_iter_max, math.ceil(data.size(1) / block_size)
+        )
 
     loss_all = 0
     actual_nb_batches_per_iter = 0
