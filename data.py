@@ -5,6 +5,7 @@ import torch
 import tqdm
 import json
 from transformers import PreTrainedTokenizer
+import pandas as pd
 
 
 class ACCPreTrainedTokenizer(PreTrainedTokenizer):
@@ -22,11 +23,12 @@ class ACCPreTrainedTokenizer(PreTrainedTokenizer):
             unk_token="<unk>",
             **kwargs
     ):
-        self.vocab = vocab if vocab is not None else {}
-        # 初始化tokenizer
+        # 确保vocab始终是字典
+        if vocab is None:
+            self.vocab = {}
+        else :
+            self.vocab = vocab
         super().__init__(pad_token=pad_token, unk_token=unk_token, **kwargs)
-
-        # 如果提供了词汇表，则使用它，否则初始化一个空的
 
         self.ids_to_tokens = {v: k for k, v in self.vocab.items()}
 
@@ -75,7 +77,6 @@ class ACCPreTrainedTokenizer(PreTrainedTokenizer):
 
     def build_inputs_with_special_tokens(self, token_ids_0, token_ids_1=None):
         """添加特殊token到输入中"""
-        # 这里我们不添加额外的特殊token，因为原始代码中没有这个逻辑
         return token_ids_0
 
     def get_special_tokens_mask(self, token_ids_0, token_ids_1=None, already_has_special_tokens=False):
@@ -93,14 +94,38 @@ class ACCPreTrainedTokenizer(PreTrainedTokenizer):
     def __getstate__(self):
         """序列化tokenizer时调用"""
         state = self.__dict__.copy()
-        # 可能需要移除不能序列化的对象
         return state
 
     def __setstate__(self, d):
         """反序列化tokenizer时调用"""
         self.__dict__ = d
-        # 重建可能需要的内部状态
         self.ids_to_tokens = {v: k for k, v in self.vocab.items()}
+
+    @classmethod
+    def _from_pretrained(cls, pretrained_model_name_or_path, *init_inputs, **kwargs):
+        """从保存的文件加载tokenizer"""
+        # 获取保存目录
+        if os.path.isdir(pretrained_model_name_or_path):
+            vocab_file = os.path.join(pretrained_model_name_or_path, "vocab.json")
+        else:
+            raise ValueError(f"未找到保存的tokenizer目录: {pretrained_model_name_or_path}")
+
+        # 加载词汇表
+        try:
+            with open(vocab_file, 'r', encoding='utf-8') as f:
+                vocab = json.load(f)
+        except FileNotFoundError:
+            raise ValueError(f"未找到词汇表文件: {vocab_file}")
+
+        # 加载配置（从kwargs中获取或使用默认值）
+        config = kwargs.pop("config", None)
+        if config and hasattr(config, "tokenizer_class") and config.tokenizer_class != cls.__name__:
+            raise ValueError(
+                f"配置中的tokenizer类({config.tokenizer_class})与当前类({cls.__name__})不匹配"
+            )
+
+        # 创建tokenizer实例
+        return cls(vocab=vocab, *init_inputs, **kwargs)
 
 
 
@@ -133,26 +158,44 @@ def _tokenize(text_path, tokenizer):
     ids = torch.LongTensor(ids)
     return ids
 
+def _tokenize_parquet(text_path, tokenizer):
+    """Tokenizes a text file."""
+    print("Tokenizing {}".format(text_path))
+    assert os.path.exists(text_path)
+    dictionary_to_update=tokenizer.vocab
+    ids = []
+    df = pd.read_parquet(text_path, columns=['code'])
+    column_data = df['code'].values
+    for i in column_data:
+        k_list=i.split()+ ["<eos>"]
+        for token in k_list:
+            if token not in dictionary_to_update:
+                ids.append(dictionary_to_update["<unk>"])
+            else:
+                ids.append(dictionary_to_update[token])
+    ids = torch.LongTensor(ids)
+    return ids
+
 class Corpus:
     def __init__(self, data_path):
-        tokenizer = ACCPreTrainedTokenizer()
-        self.train = _tokenize(
-            tokenizer=tokenizer,
+        self.tokenizer = ACCPreTrainedTokenizer._from_pretrained("my_custom_tokenizer")
+        self.train = _tokenize_parquet(
+            tokenizer=self.tokenizer,
             text_path=os.path.join(data_path, "train.parquet"),
         )
-        self.valid = _tokenize(
-            tokenizer=tokenizer,
-            text_path=os.path.join(data_path, "valid.parquet"),
+        self.valid = _tokenize_parquet(
+            tokenizer=self.tokenizer,
+            text_path=os.path.join(data_path, "validation.parquet"),
         )
-        self.test = _tokenize(
-            tokenizer=tokenizer,
+        self.test = _tokenize_parquet(
+            tokenizer=self.tokenizer,
             text_path=os.path.join(data_path, "test.parquet"),
         )
 
-    tokenizer.save_pretrained("my_custom_tokenizer")
+    # tokenizer.save_pretrained("my_custom_tokenizer")
     @property
     def vocab_size(self):
-        return len(self._dictionary)
+        return len(self.tokenizer.vocab)
 
 # class Corpus:
 #     def __init__(self, data_path):
