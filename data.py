@@ -176,20 +176,42 @@ def _tokenize_parquet(text_path, tokenizer):
     ids = torch.LongTensor(ids)
     return ids
 
+def _tokenize_json(text_path, tokenizer):
+    """Tokenizes a text file."""
+    print("Tokenizing {}".format(text_path))
+    assert os.path.exists(text_path)
+    dictionary_to_update=tokenizer.vocab
+    ids = []
+    with open(text_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        # 提取所有sql字段内容
+        sql_contents = [i['sql'] for i in data]
+    for i in sql_contents:
+        i=str(i)
+        k_list=i.split()+ ["<eos>"]
+        for token in k_list:
+            if token not in dictionary_to_update:
+                ids.append(dictionary_to_update["<unk>"])
+            else:
+                ids.append(dictionary_to_update[token])
+    ids = torch.LongTensor(ids)
+    return ids
+
+#spider
 class Corpus:
     def __init__(self, data_path):
         self.tokenizer = ACCPreTrainedTokenizer._from_pretrained("my_custom_tokenizer")
-        self.train = _tokenize_parquet(
+        self.train = _tokenize_json(
             tokenizer=self.tokenizer,
-            text_path=os.path.join(data_path, "train.parquet"),
+            text_path=os.path.join(data_path, "train.json"),
         )
-        self.valid = _tokenize_parquet(
+        self.valid = _tokenize_json(
             tokenizer=self.tokenizer,
-            text_path=os.path.join(data_path, "validation.parquet"),
+            text_path=os.path.join(data_path, "validation.json"),
         )
-        self.test = _tokenize_parquet(
+        self.test = _tokenize_json(
             tokenizer=self.tokenizer,
-            text_path=os.path.join(data_path, "test.parquet"),
+            text_path=os.path.join(data_path, "test.json"),
         )
 
     # tokenizer.save_pretrained("my_custom_tokenizer")
@@ -197,6 +219,29 @@ class Corpus:
     def vocab_size(self):
         return len(self.tokenizer.vocab)
 
+
+#mbpp
+# class Corpus:
+#     def __init__(self, data_path):
+#         self.tokenizer = ACCPreTrainedTokenizer._from_pretrained("my_custom_tokenizer")
+#         self.train = _tokenize_parquet(
+#             tokenizer=self.tokenizer,
+#             text_path=os.path.join(data_path, "train.parquet"),
+#         )
+#         self.valid = _tokenize_parquet(
+#             tokenizer=self.tokenizer,
+#             text_path=os.path.join(data_path, "validation.parquet"),
+#         )
+#         self.test = _tokenize_parquet(
+#             tokenizer=self.tokenizer,
+#             text_path=os.path.join(data_path, "test.parquet"),
+#         )
+#
+#     # tokenizer.save_pretrained("my_custom_tokenizer")
+#     @property
+#     def vocab_size(self):
+#         return len(self.tokenizer.vocab)
+#wiki103
 # class Corpus:
 #     def __init__(self, data_path):
 #         tokenizer = ACCPreTrainedTokenizer()
