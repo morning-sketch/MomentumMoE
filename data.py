@@ -258,7 +258,7 @@ class Corpus:
 #             text_path=os.path.join(data_path, "test.txt"),
 #         )
 #
-#     tokenizer.save_pretrained("my_custom_tokenizer")
+#         tokenizer.save_pretrained("my_custom_tokenizer")
 #     @property
 #     def vocab_size(self):
 #         return len(self._dictionary)
