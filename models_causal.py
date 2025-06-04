@@ -522,7 +522,9 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
             mu=0.9,
             beta1=0.9,
             beta2=0.999,
-            layerth=0
+            layerth=0,
+            cmp_size=64,
+            graph_size = 8,
     ):
         activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
         super().__init__(
@@ -542,6 +544,8 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
         self.beta1 = beta1
         self.beta2 = beta2
         self.layerth = layerth
+        self.cmp_size = cmp_size
+        self.graph_size = graph_size
 
     def forward(self, inp, moment,attn_weights):
         if self.pre_lnorm:
@@ -570,7 +574,7 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
 
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,attn_weights)
+            core_out = super().forward(inp,attn_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             if self.layerth < 1:
@@ -782,7 +786,7 @@ class TransformerSeqLayer(nn.Module):
 
         self.attn = (
             Causal_MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout,block_size=block_size, cmp_size=cmp_size,**kargs)
-            if g is "d"
+            if g is "d"  or g is "t"
             else
             MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout, **kargs)
             if s is "s"
@@ -901,6 +905,8 @@ class TransformerSeqLayer(nn.Module):
                     beta1=beta1,
                     beta2=beta2,
                     layerth=layerth,
+                    cmp_size=cmp_size,
+                    graph_size=graph_size,
                 )
                 if g is "t"
                 else None
@@ -930,7 +936,7 @@ class TransformerSeqLayer(nn.Module):
 
         if self.use_attn:
             h_all = torch.cat([h_cache, h], dim=1)  # B x (M+L) x H
-            if self.g == "d" :
+            if self.g == "d" or self.g == "t":
                 attn_out, attn_weights = self.attn(h, h_all, h_all, key_pe)
             else :
                 attn_out= self.attn(h, h_all, h_all, key_pe)

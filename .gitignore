@@ -1,3 +1,4 @@
 wandb/
 data_directory/wikitext-103/*
 .idea/vcs.xml
+data_directory/codeforces-dataset/*
