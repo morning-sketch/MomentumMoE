@@ -317,6 +317,8 @@ class CausalCustomizedMoEPositionwiseFF(CausalFMoETransformerMLP):
         pre_lnorm=False,
         moe_num_expert=16,
         moe_top_k=2,
+        cmp_size=0,
+        graph_size=0,
     ):
         activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
         super().__init__(
@@ -330,6 +332,8 @@ class CausalCustomizedMoEPositionwiseFF(CausalFMoETransformerMLP):
         self.pre_lnorm = pre_lnorm
         self.layer_norm = nn.LayerNorm(hidden_size)
         self.dropout = nn.Dropout(dropout)
+        self.cmp_size=cmp_size
+        self.graph_size=graph_size
     def forward(self, inp,attn_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
@@ -340,7 +344,7 @@ class CausalCustomizedMoEPositionwiseFF(CausalFMoETransformerMLP):
             output = core_out + inp
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,attn_weights)
+            core_out = super().forward(inp,attn_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             ##### residual connection + layer normalization
@@ -785,7 +789,7 @@ class TransformerSeqLayer(nn.Module):
 
         self.attn = (
             Causal_MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout,block_size=block_size, cmp_size=cmp_size,**kargs)
-            if g is "d" or g is "t"
+            if g is "d" or g is "t" or g is "c"
             else
             MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout, **kargs)
             if s is "s"
@@ -827,6 +831,8 @@ class TransformerSeqLayer(nn.Module):
                     inner_hidden_size=inner_hidden_size,
                     dropout=dropout,
                     moe_top_k=moe_top_k,
+                    cmp_size=cmp_size,
+                    graph_size=graph_size,
                 )
                 if g is "c"
                 else
