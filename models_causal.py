@@ -941,7 +941,7 @@ class TransformerSeqLayer(nn.Module):
 
         if self.use_attn:
             h_all = torch.cat([h_cache, h], dim=1)  # B x (M+L) x H
-            if self.g == "d" or self.g == "t":
+            if self.g == "d" or self.g == "t" or self.g == "c":
                 attn_out, attn_weights = self.attn(h, h_all, h_all, key_pe)
             else :
                 attn_out= self.attn(h, h_all, h_all, key_pe)
