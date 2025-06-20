@@ -245,17 +245,31 @@ class FMoE(nn.Module):
         with torch.no_grad():
             #将attn_weights变成numpy数组
             attn_weights=attn_weights.cpu().numpy()
-            rets=[]
-            splitnum = int(attn_weights.shape[1] / graph_size)
+            percentage=0.05
+            B, M, D = attn_weights.shape
+            K = int(M * percentage)
+            K = max(1, K)
+            neighborhood_size =K
+            summed_arr = np.sum(attn_weights, axis=-1)  # (B,M)
+            top_indices = np.zeros((B, K), dtype=int)
+            for i in range(B):
+                # 使用partition获取前K大的索引
+                indices = np.argpartition(summed_arr[i], -K)[-K:]
+                # 按值从小到大排序
+                indices = np.sort(indices)
+                top_indices[i] = indices
+            splitnum = int(K // graph_size)
+            share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
-                    splite_slice = slice(add_index * graph_size, add_index * graph_size + graph_size)
-                    rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1],cmp_size=cmp_size))
-            share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
-            for add_index in range(len(rets)):
-                for j in range(len(rets[add_index])):
-                    for k in range(0, len(rets[add_index][j])):
-                        share_expert_k_list[add_index*graph_size*cmp_size+rets[add_index][j][k]] = self.num_expert-1
+                    indices = top_indices[f_index][add_index*graph_size : (add_index+1)*graph_size]
+                    rets=split_graph_into_equal_size_subgraphs(attn_weights[f_index][indices[:, None], indices], moe_inp.shape[-1],cmp_size=1)
+                    for j in range(len(rets)):
+                        for k in range(len(rets[j])):
+                            no_pos=f_index * attn_weights.shape[1] + top_indices[f_index][add_index * graph_size+rets[j][k]]
+                            start_pos = max(0, no_pos - neighborhood_size)
+                            end_pos = min(B, no_pos + neighborhood_size + 1)
+                            share_expert_k_list[start_pos:end_pos] = self.num_expert - 1
             """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)
