@@ -180,7 +180,7 @@ class FMoE(nn.Module):
         else:
             self.slice_size = self.slice_group.size()
             self.slice_rank = self.slice_group.rank()
-        self.share_expert_num = 1
+        self.share_expert_num = 2
         self.top_k = moe_top_k
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
@@ -259,7 +259,7 @@ class FMoE(nn.Module):
                 indices = np.sort(indices)
                 top_indices[i] = indices
             splitnum = int(K // graph_size)
-            share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
+            share_expert_k_list = torch.zeros((moe_inp.shape[0], self.share_expert_num))
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
                     indices = top_indices[f_index][add_index*graph_size : (add_index+1)*graph_size]
@@ -267,9 +267,11 @@ class FMoE(nn.Module):
                     for j in range(len(rets)):
                         for k in range(len(rets[j])):
                             no_pos=f_index * attn_weights.shape[1] + top_indices[f_index][add_index * graph_size+rets[j][k]]
-                            start_pos = max(0, no_pos - neighborhood_size)
-                            end_pos = min(B, no_pos + neighborhood_size + 1)
-                            share_expert_k_list[start_pos:end_pos] = self.num_expert - 1
+                            start_pos = max(0, int(no_pos - neighborhood_size))
+                            end_pos = min(moe_inp.shape[0], int(no_pos + neighborhood_size + 1))
+                            for ii in range(0,self.share_expert_num):
+                                share_expert_k_list[start_pos:end_pos][ii] = self.num_expert - 1 - ii
+
             """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)
@@ -375,7 +377,11 @@ class FMoE(nn.Module):
             return tensor
 
         moe_outp = tree.map_structure(bmm_func, moe_outp)
-        share_fwd=share_fwd.squeeze(1)
+        # print("moe_outp.shape:",moe_outp.shape)
+        # print("share_fwd.shape:",share_fwd.shape)
+        # exit(0)
+        share_fwd = torch.mean(share_fwd, dim=1)
+        # share_fwd=share_fwd.squeeze(1)
         sg=self.sigmoid_mlp(torch.cat((moe_outp[share_mask], share_fwd),dim=-1))
         moe_outp[share_mask]=moe_outp[share_mask]*sg+(1-sg)*share_fwd
         if self.slice_size > 1:
