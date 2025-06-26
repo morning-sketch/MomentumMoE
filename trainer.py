@@ -34,6 +34,7 @@ def get_cosine_regularization(model):
         layer_nums = -2
     weight_htoh4 = model.module.layers[layer_nums].smoe.experts.htoh4.weight.data  # 第16个线性层
     weight_h4toh = model.module.layers[layer_nums].smoe.experts.h4toh.weight.data
+    weight_gate = model.module.layers[layer_nums].smoe.gate.gate.weight.data
 
     # 展平权重（保留专家维度，其他维度展平）
     flat_htoh4 = weight_htoh4.view(weight_htoh4.size(0), -1)  # 形状: (16, 352*352)
@@ -67,8 +68,9 @@ def get_cosine_regularization(model):
     reg_loss_h4toh = cos_sim_h4toh.mean()
 
     # 合并两个线性层的正则损失
-    total_reg_loss = reg_loss_htoh4 + reg_loss_h4toh
-    return total_reg_loss
+    total_reg_loss = (reg_loss_htoh4 + reg_loss_h4toh)/2
+    simple_loss = torch.mean(torch.norm(weight_gate, dim=0))
+    return total_reg_loss + simple_loss
 
 
 def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
@@ -78,8 +80,8 @@ def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
     out = out.view(-1, out.size(-1))
     loss = torch.nn.functional.nll_loss(out, Y.view(-1))
     loss_value = loss.item() / loss_div
-
-    loss_value=loss_value+get_cosine_regularization(model)
+    reg=0.01
+    loss_value=loss_value+reg*get_cosine_regularization(model)
     if not eval_only:
         # loss term from adaptive-span
         if model.module.layers[0].attn.attn.adapt_span_enabled:
