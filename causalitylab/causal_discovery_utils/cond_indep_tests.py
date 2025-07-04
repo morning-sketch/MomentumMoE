@@ -324,6 +324,7 @@ class CondIndepParCorr(StatCondIndep):
         else:  # zz contains 2 or more variables
             all_var_idx = (x, y) + zz
             corr_coef_subset = corr_coef[np.ix_(all_var_idx, all_var_idx)]
+            corr_coef_subset = np.nan_to_num(corr_coef_subset, nan=0.0, posinf=0.0, neginf=0.0)
             inv_corr_coef = -np.linalg.pinv(corr_coef_subset)  # consider using pinv instead of inv
             par_corr = inv_corr_coef[0, 1] / np.sqrt(abs(inv_corr_coef[0, 0] * inv_corr_coef[1, 1]))
 

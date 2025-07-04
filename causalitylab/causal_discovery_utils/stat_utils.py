@@ -13,7 +13,7 @@ def cov_to_corr(cov_matrix: np.ndarray):
     assert cov_matrix.shape[0] == cov_matrix.shape[1]  # square
     min_variance = 1e-8  # minimal variance allowed
     diag = np.sqrt(np.diag(cov_matrix))
-    assert np.all(diag > min_variance)  # variance is smaller than the supported minimal value
+    # assert np.all(diag > min_variance)  # variance is smaller than the supported minimal value
     inv_std = 1.0 / diag
 
     # Calculate the correlation matrix

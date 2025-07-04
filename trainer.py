@@ -6,7 +6,72 @@ import tqdm
 
 from custom_gates import *
 from data import ACCPreTrainedTokenizer
+import torch.nn.functional as F
 
+
+def has_module_path(model, path):
+    """检查模型是否包含指定路径的子模块"""
+    parts = path.split('.')
+    current = model
+
+    for part in parts:
+        if not hasattr(current, part):
+            return False
+        current = getattr(current, part)
+
+    return True
+
+
+# 使用示例
+
+
+
+def get_cosine_regularization(model):
+    """计算第16个线性层与其他线性层的余弦相似度正则化项"""
+    layer_nums=-1
+    if has_module_path(model, "module.layers[-1].smoe"):
+        layer_nums=-1
+    else:
+        layer_nums = -2
+    weight_htoh4 = model.module.layers[layer_nums].smoe.experts.htoh4.weight.data  # 第16个线性层
+    weight_h4toh = model.module.layers[layer_nums].smoe.experts.h4toh.weight.data
+    weight_gate = model.module.layers[layer_nums].smoe.gate.gate.weight.data
+
+    # 展平权重（保留专家维度，其他维度展平）
+    flat_htoh4 = weight_htoh4.view(weight_htoh4.size(0), -1)  # 形状: (16, 352*352)
+    flat_h4toh = weight_h4toh.view(weight_h4toh.size(0), -1)  # 形状: (16, 352*352)
+
+    # 提取目标专家（第16个）的权重向量
+    target_htoh4 = flat_htoh4[-1]  # 形状: (352*352,)
+    target_h4toh = flat_h4toh[-1]  # 形状: (352*352,)
+
+    # 其他专家的权重向量（排除目标专家）
+    others_htoh4 = flat_htoh4[:-1]
+    others_h4toh = flat_h4toh[:-1]# 形状: (15, 352*352)
+    others_htoh4=others_htoh4[0]
+    others_h4toh=others_h4toh[0]
+    # print("type(flat_h4toh):",type(flat_h4toh))
+    # 计算余弦相似度（自动广播计算）
+    cos_sim_htoh4 = F.cosine_similarity(
+        target_htoh4.unsqueeze(0),  # 增加维度 -> (1, D)
+        others_htoh4,  # (15, D)
+        dim=1
+    )  # 返回形状: (15,)
+
+    cos_sim_h4toh = F.cosine_similarity(
+        target_h4toh.unsqueeze(0),
+        others_h4toh,
+        dim=1
+    )  # 形状: (15,)
+
+    # 对相似度取平均作为正则项
+    reg_loss_htoh4 = cos_sim_htoh4.mean()
+    reg_loss_h4toh = cos_sim_h4toh.mean()
+
+    # 合并两个线性层的正则损失
+    total_reg_loss = (reg_loss_htoh4 + reg_loss_h4toh)/2
+    simple_loss = torch.mean(torch.norm(weight_gate, dim=0))
+    return total_reg_loss + simple_loss
 def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
     """Single training step."""
 
@@ -32,9 +97,8 @@ def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
 
     loss = torch.nn.functional.nll_loss(out, y_flat)
     loss_value = loss.item() / loss_div
-
-    # 打印统计信息 (调试用)
-    print(f"正确预测: {correct}, 准确率: {ratio:.2f}")
+    reg = 0.01
+    loss_value = loss_value + reg * get_cosine_regularization(model)
 
     if not eval_only:
         # loss term from adaptive-span
