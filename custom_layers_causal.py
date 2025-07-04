@@ -27,7 +27,7 @@ from networkx.algorithms.community import kernighan_lin_bisection
 import multiprocessing
 """for causal map end """
 
-def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims,cmp_size):
+def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims):
     """
     将给定邻接矩阵表示的图划分为固定数量且节点数量尽量相同的子图。
 
@@ -46,10 +46,10 @@ def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims,cmp_size):
     row_means=adj_matrix.mean(axis=1)
     max_mean_row_index = np.argmax(row_means)
     explain_ret = explainer.explain(target_node_idx=max_mean_row_index)
-    ret.append(get_real_index(max_mean_row_index, cmp_size))
+    ret.append(max_mean_row_index)
     if len(explain_ret)!=0:
         for j in explain_ret[-1][0]:
-            ret[-1]=ret[-1]+get_real_index(j,cmp_size)
+            ret.append(j)
     return ret
 
 
@@ -180,7 +180,7 @@ class FMoE(nn.Module):
         else:
             self.slice_size = self.slice_group.size()
             self.slice_rank = self.slice_group.rank()
-        self.share_expert_num = 2
+        self.share_expert_num = 1
         self.top_k = moe_top_k
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
@@ -245,11 +245,10 @@ class FMoE(nn.Module):
         with torch.no_grad():
             #将attn_weights变成numpy数组
             attn_weights=attn_weights.cpu().numpy()
-            percentage=0.05
+            percentage=0.025
             B, M, D = attn_weights.shape
-            K = int(M * percentage)
-            K = max(1, K)
-            neighborhood_size =K
+            K = graph_size
+            neighborhood_size =int(M * percentage)
             summed_arr = np.sum(attn_weights, axis=-1)  # (B,M)
             top_indices = np.zeros((B, K), dtype=int)
             for i in range(B):
@@ -263,14 +262,12 @@ class FMoE(nn.Module):
             for f_index in range(attn_weights.shape[0]):
                 for add_index in range(splitnum):
                     indices = top_indices[f_index][add_index*graph_size : (add_index+1)*graph_size]
-                    rets=split_graph_into_equal_size_subgraphs(attn_weights[f_index][indices[:, None], indices], moe_inp.shape[-1],cmp_size=1)
+                    rets=split_graph_into_equal_size_subgraphs(attn_weights[f_index][indices[:, None], indices], moe_inp.shape[-1])
                     for j in range(len(rets)):
-                        for k in range(len(rets[j])):
-                            no_pos=f_index * attn_weights.shape[1] + top_indices[f_index][add_index * graph_size+rets[j][k]]
-                            start_pos = max(0, int(no_pos - neighborhood_size))
-                            end_pos = min(moe_inp.shape[0], int(no_pos + neighborhood_size + 1))
-                            for ii in range(0,self.share_expert_num):
-                                share_expert_k_list[start_pos:end_pos][ii] = self.num_expert - 1 - ii
+                        no_pos = f_index * attn_weights.shape[1] + top_indices[f_index][add_index * graph_size + rets[j]]
+                        start_pos = max(0, int(no_pos - neighborhood_size))
+                        end_pos = min(moe_inp.shape[0], int(no_pos + neighborhood_size + 1))
+                        share_expert_k_list[start_pos:end_pos] = self.num_expert - 1
 
             """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
@@ -377,11 +374,8 @@ class FMoE(nn.Module):
             return tensor
 
         moe_outp = tree.map_structure(bmm_func, moe_outp)
-        # print("moe_outp.shape:",moe_outp.shape)
-        # print("share_fwd.shape:",share_fwd.shape)
-        # exit(0)
-        share_fwd = torch.mean(share_fwd, dim=1)
-        # share_fwd=share_fwd.squeeze(1)
+        # share_fwd = torch.mean(share_fwd, dim=1)
+        share_fwd=share_fwd.squeeze(1)
         sg=self.sigmoid_mlp(torch.cat((moe_outp[share_mask], share_fwd),dim=-1))
         moe_outp[share_mask]=moe_outp[share_mask]*sg+(1-sg)*share_fwd
         if self.slice_size > 1:
