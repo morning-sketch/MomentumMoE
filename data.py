@@ -197,27 +197,6 @@ def _tokenize_json(text_path, tokenizer):
     ids = torch.LongTensor(ids)
     return ids
 
-#spider
-class Corpus:
-    def __init__(self, data_path):
-        self.tokenizer = ACCPreTrainedTokenizer._from_pretrained("my_custom_tokenizer")
-        self.train = _tokenize_json(
-            tokenizer=self.tokenizer,
-            text_path=os.path.join(data_path, "train.json"),
-        )
-        self.valid = _tokenize_json(
-            tokenizer=self.tokenizer,
-            text_path=os.path.join(data_path, "validation.json"),
-        )
-        self.test = _tokenize_json(
-            tokenizer=self.tokenizer,
-            text_path=os.path.join(data_path, "test.json"),
-        )
-
-    # tokenizer.save_pretrained("my_custom_tokenizer")
-    @property
-    def vocab_size(self):
-        return len(self.tokenizer.vocab)
 
 
 #mbpp
@@ -242,26 +221,26 @@ class Corpus:
 #     def vocab_size(self):
 #         return len(self.tokenizer.vocab)
 #wiki103
-# class Corpus:
-#     def __init__(self, data_path):
-#         tokenizer = ACCPreTrainedTokenizer()
-#         self.train = _tokenize(
-#             tokenizer=tokenizer,
-#             text_path=os.path.join(data_path, "train.txt"),
-#         )
-#         self.valid = _tokenize(
-#             tokenizer=tokenizer,
-#             text_path=os.path.join(data_path, "valid.txt"),
-#         )
-#         self.test = _tokenize(
-#             tokenizer=tokenizer,
-#             text_path=os.path.join(data_path, "test.txt"),
-#         )
-#
-#         tokenizer.save_pretrained("my_custom_tokenizer")
-#     @property
-#     def vocab_size(self):
-#         return len(self._dictionary)
+class Corpus:
+    def __init__(self, data_path):
+        tokenizer = ACCPreTrainedTokenizer()
+        self.train = _tokenize(
+            tokenizer=tokenizer,
+            text_path=os.path.join(data_path, "train.txt"),
+        )
+        self.valid = _tokenize(
+            tokenizer=tokenizer,
+            text_path=os.path.join(data_path, "valid.txt"),
+        )
+        self.test = _tokenize(
+            tokenizer=tokenizer,
+            text_path=os.path.join(data_path, "test.txt"),
+        )
+
+        tokenizer.save_pretrained("my_custom_tokenizer")
+    @property
+    def vocab_size(self):
+        return len(self._dictionary)
 
 
 def _batchify(data_tensor, batch_size):
