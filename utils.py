@@ -149,7 +149,7 @@ def get_optimizer_and_scheduler(model, optim_params):
     optimizer = _get_optimizer(
         model=model,
         optim=optim_params["optim"],
-        lr=optim_params["lr"],
+        lr=optim_params["lr"]
         momentum=optim_params["momentum"],
         grad_clip=optim_params["grad_clip"],
     )

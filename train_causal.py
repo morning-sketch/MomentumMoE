@@ -92,7 +92,8 @@ def launch(
 
     # create logger
     logger = Logger()
-    fold_name = trainer_params["checkpoint_path"].split("/")[-1].split(".")[0]
+    # fold_name = trainer_params["checkpoint_path"].split("/")[-1].split(".")[0]
+    fold_name=optim_params["lr"]
     folder_path = "/".join(trainer_params["checkpoint_path"].split("/")[:-1])
     logging = create_exp_dir(f"{folder_path}/experiments/{fold_name}")
     # log paramters
@@ -108,6 +109,7 @@ def launch(
         f"Total of Trainable Parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
     )
     # resume training from last checkpoint if exists
+
     iter_init = load_checkpoint(
         trainer_params["checkpoint_path"],
         model,
@@ -126,7 +128,7 @@ def launch(
     if trainer_params["full_eval_mode"]:
         # evaluate the model on test data
         with torch.no_grad():
-            loss_val = full_eval(
+            loss_val,counts = full_eval(
                 model,
                 optimizer,
                 scheduler,
@@ -135,7 +137,7 @@ def launch(
                 model_params["hidden_size"],
                 trainer_params["batch_split"],
             )
-            loss_test = full_eval(
+            loss_test,counts = full_eval(
                 model,
                 optimizer,
                 scheduler,
@@ -163,6 +165,8 @@ def launch(
             else:
                 logging("Val: {:.3f} PPL".format(math.exp(loss_val)))
                 logging("Test: {:.3f} PPL".format(math.exp(loss_test)))
+            logging("Activate_expert: ")
+            logging(str(counts))
         return
 
     # position of current batch
@@ -189,7 +193,7 @@ def launch(
 
         # time storing
         t_sta = time.time()
-        loss_train, data_pos[0], hid_cache[0] = train_iteration(
+        loss_train, data_pos[0], hid_cache[0],counts = train_iteration(
             model,
             model_params["load_balance"],
             optimizer,
@@ -205,7 +209,7 @@ def launch(
         )
         elapsed = 1000 * (time.time() - t_sta) / nb_batches_per_iter
         with torch.no_grad():
-            loss_val, data_pos[1], hid_cache[1] = train_iteration(
+            loss_val, data_pos[1], hid_cache[1],counts = train_iteration(
                 model,
                 model_params["load_balance"],
                 optimizer,
@@ -268,6 +272,8 @@ def launch(
         # save_checkpoint(trainer_params['checkpoint_path'], nb_batches_per_iter, model, optimizer, scheduler, logger)
     end_time = time.time()
     logging(f"Training time total: {(end_time - start_time)/3600} h")
+    logging("Activate_expert: ")
+    logging(str(counts))
 
 
 if __name__ == "__main__":

@@ -64,8 +64,8 @@ class CausalFMoETransformerMLP(FMoE):
         """
         original_shape = inp.shape
         inp = inp.reshape(-1, self.d_model)
-        output = super().forward(inp,attn_weights,cmp_size,graph_size)
-        return output.reshape(original_shape)
+        output,counts = super().forward(inp,attn_weights,cmp_size,graph_size)
+        return output.reshape(original_shape),counts
 
 
 class CausalFMoETransformerMLPOpt(FMoEOpt):

@@ -164,8 +164,8 @@ def _tokenize_parquet(text_path, tokenizer):
     assert os.path.exists(text_path)
     dictionary_to_update=tokenizer.vocab
     ids = []
-    df = pd.read_parquet(text_path, columns=['code'])
-    column_data = df['code'].values
+    df = pd.read_parquet(text_path, columns=['solution'])
+    column_data = df['solution'].values
     for i in column_data:
         k_list=i.split()+ ["<eos>"]
         for token in k_list:

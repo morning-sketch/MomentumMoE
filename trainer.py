@@ -7,33 +7,15 @@ import tqdm
 from custom_gates import *
 
 import torch.nn.functional as F
-def has_module_path(model, path):
-    """检查模型是否包含指定路径的子模块"""
-    parts = path.split('.')
-    current = model
-
-    for part in parts:
-        if not hasattr(current, part):
-            return False
-        current = getattr(current, part)
-
-    return True
-
-
-# 使用示例
-
 
 
 def get_cosine_regularization(model):
     """计算第16个线性层与其他线性层的余弦相似度正则化项"""
     layer_nums=-1
-    if has_module_path(model, "module.layers[-1].smoe"):
-        layer_nums=-1
-    else:
-        layer_nums = -2
+    if "ff" in model.module.layers[layer_nums]._modules:
+        layer_nums=-2
     weight_htoh4 = model.module.layers[layer_nums].smoe.experts.htoh4.weight.data  # 第16个线性层
     weight_h4toh = model.module.layers[layer_nums].smoe.experts.h4toh.weight.data
-    weight_gate = model.module.layers[layer_nums].smoe.gate.gate.weight.data
 
     # 展平权重（保留专家维度，其他维度展平）
     flat_htoh4 = weight_htoh4.view(weight_htoh4.size(0), -1)  # 形状: (16, 352*352)
@@ -46,9 +28,6 @@ def get_cosine_regularization(model):
     # 其他专家的权重向量（排除目标专家）
     others_htoh4 = flat_htoh4[:-1]
     others_h4toh = flat_h4toh[:-1]# 形状: (15, 352*352)
-    others_htoh4=others_htoh4[0]
-    others_h4toh=others_h4toh[0]
-    # print("type(flat_h4toh):",type(flat_h4toh))
     # 计算余弦相似度（自动广播计算）
     cos_sim_htoh4 = F.cosine_similarity(
         target_htoh4.unsqueeze(0),  # 增加维度 -> (1, D)
@@ -63,19 +42,18 @@ def get_cosine_regularization(model):
     )  # 形状: (15,)
 
     # 对相似度取平均作为正则项
-    reg_loss_htoh4 = cos_sim_htoh4.mean()
-    reg_loss_h4toh = cos_sim_h4toh.mean()
+    reg_loss_htoh4 = torch.abs(cos_sim_htoh4).mean()
+    reg_loss_h4toh = torch.abs(cos_sim_h4toh).mean()
 
     # 合并两个线性层的正则损失
     total_reg_loss = (reg_loss_htoh4 + reg_loss_h4toh)/2
-    simple_loss = torch.mean(torch.norm(weight_gate, dim=0))
-    return total_reg_loss + simple_loss
+    return total_reg_loss
 
 
 def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
     """Single training step."""
 
-    out, h_cache = model(X, h_cache)
+    out, h_cache,counts = model(X, h_cache)
     out = out.view(-1, out.size(-1))
     loss = torch.nn.functional.nll_loss(out, Y.view(-1))
     loss_value = loss.item() / loss_div
@@ -99,7 +77,7 @@ def _train_step(model, load_balance, X, Y, h_cache, eval_only, loss_div=1):
                         balance_loss += m.loss
             loss += load_balance * balance_loss
         (loss / loss_div).backward(retain_graph=True)
-    return loss_value, h_cache
+    return loss_value, h_cache,counts
 
 
 def _train_batch(
@@ -108,20 +86,22 @@ def _train_batch(
     """Train on a batch."""
 
     optimizer.zero_grad()
-
+    counts=None
     if batch_split == 1:
         # process a batch in a single step (default behaviour)
-        loss_value, h_cache = _train_step(model, load_balance, X, Y, h_cache, eval_only)
+        loss_value, h_cache, activate_expert = _train_step(model, load_balance, X, Y, h_cache, eval_only)
+        counts=activate_expert
     else:
         # split a batch into multiple pieces that each can fit in memory
         assert X.size(0) % batch_split == 0
         split_size = X.size(0) // batch_split
         loss_value = 0
         h_cache_list = []
+
         for split_ind in range(batch_split):
             split_slice = slice(split_ind * split_size, (split_ind + 1) * split_size)
             split_h_cache = [h[split_slice, :, :] for h in h_cache]
-            split_loss_value, split_h_cache = _train_step(
+            split_loss_value, split_h_cache,split_activate_expert = _train_step(
                 model,
                 load_balance,
                 X[split_slice, :],
@@ -131,6 +111,10 @@ def _train_batch(
                 batch_split,
             )
             loss_value += split_loss_value
+            if counts is None:
+                counts=split_activate_expert
+            else:
+                counts+=split_activate_expert
             h_cache_list.append(split_h_cache)
         h_cache = [
             torch.cat([h_cache_list[i][l] for i in range(batch_split)], dim=0)
@@ -146,7 +130,7 @@ def _train_batch(
             for layer in model.module.layers:
                 if layer.use_attn:
                     layer.attn.attn.adaptive_span.clamp_param()
-    return loss_value, h_cache
+    return loss_value, h_cache, counts
 
 
 def train_iteration(
@@ -183,12 +167,13 @@ def train_iteration(
 
     loss_all = 0
     actual_nb_batches_per_iter = 0
+    counts=None
     for _ in tqdm.tqdm(range(nb_batches_per_iter_max)):
         actual_nb_batches_per_iter += 1
         X = data[:, train_pos : train_pos + block_size].contiguous()
         Y = data[:, train_pos + 1 : train_pos + block_size + 1].contiguous()
 
-        loss, h_cache = _train_batch(
+        loss, h_cache,counts_split = _train_batch(
             model=model,
             load_balance=load_balance,
             optimizer=optimizer,
@@ -199,6 +184,10 @@ def train_iteration(
             eval_only=eval_only,
             batch_split=batch_split,
         )
+        if counts is None:
+            counts=counts_split
+        else:
+            counts+=counts_split
         loss_all += loss
         train_pos += block_size
         if train_pos >= data.size(1) - block_size:
@@ -209,7 +198,7 @@ def train_iteration(
                 h.fill_(0)
 
     loss_all = loss_all / actual_nb_batches_per_iter
-    return loss_all, train_pos, h_cache
+    return loss_all, train_pos, h_cache,counts
 
 
 # do full evaluation
@@ -227,13 +216,14 @@ def full_eval(model, optimizer, scheduler, data, block_size, hidden_size, batch_
     ]
 
     loss_all = 0
+    counts=None
     actual_nb_batches_per_iter = 0
     for _ in tqdm.tqdm(range(nb_batches_per_iter_max)):
         actual_nb_batches_per_iter += 1
         X = data[:, train_pos : train_pos + block_size].contiguous()
         Y = data[:, train_pos + 1 : train_pos + block_size + 1].contiguous()
 
-        loss, h_cache = _train_batch(
+        loss, h_cache,split_activate_expert = _train_batch(
             model=model,
             load_balance=0,
             optimizer=optimizer,
@@ -246,10 +236,14 @@ def full_eval(model, optimizer, scheduler, data, block_size, hidden_size, batch_
         )
         loss_all += loss
         train_pos += block_size
+        if counts is None:
+            counts=split_activate_expert
+        else:
+            counts+=split_activate_expert
         if train_pos >= data.size(1) - block_size:
             # Skip the remaining tokens as it can't make a whole block.
             # An effect on performance should be negligable for a large data.
             break
 
     loss_all = loss_all / actual_nb_batches_per_iter
-    return loss_all
+    return loss_all,counts

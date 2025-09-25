@@ -251,6 +251,7 @@ class FMoE(nn.Module):
                 for add_index in range(splitnum):
                     splite_slice = slice(add_index * graph_size, add_index * graph_size + graph_size)
                     rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1],cmp_size=cmp_size))
+
             share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
             for add_index in range(len(rets)):
                 for j in range(len(rets[add_index])):
@@ -378,7 +379,15 @@ class FMoE(nn.Module):
         assert all(
             [batch_size == moe_outp_batch_size[0] for batch_size in moe_outp_batch_size]
         ), "MoE outputs must have the same batch size"
-        return moe_outp
+        # 将二维张量展平为一维
+        flat_indices = gate_top_k_idx.view(-1)
+
+        # 统计每个整数出现的次数
+        counts = torch.bincount(flat_indices, minlength=self.num_expert-1)  # minlength设为15确保统计0-14
+        new_counts = torch.zeros(self.num_expert, dtype=counts.dtype, device=counts.device)
+        new_counts[:self.num_expert-1] = counts
+        new_counts[self.num_expert-1]=torch.count_nonzero(share_mask)
+        return moe_outp,new_counts
 
 
 ##############################################################################

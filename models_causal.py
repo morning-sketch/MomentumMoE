@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
-from custom_transformer import FMoETransformerMLP, FMoETransformerMLPOpt
+from custom_transformer import FMoETransformerMLP, FMoETransformerMLPOpt,FMoETransformerMLP_out
 from custom_transformer_causal import CausalFMoETransformerMLP, CausalFMoETransformerMLPOpt
 from custom_gates import *
 import cmath
@@ -337,19 +337,19 @@ class CausalCustomizedMoEPositionwiseFF(CausalFMoETransformerMLP):
     def forward(self, inp,attn_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
-            core_out = super().forward(self.layer_norm(inp,attn_weights))
+            core_out,counts = super().forward(self.layer_norm(inp,attn_weights))
             core_out = self.dropout(core_out)
 
             ##### residual connection
             output = core_out + inp
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,attn_weights,self.cmp_size,self.graph_size)
+            core_out,counts = super().forward(inp,attn_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             ##### residual connection + layer normalization
             output = self.layer_norm(inp + core_out)
-        return output
+        return output,counts
 class CustomizedMoEPositionwiseFF(FMoETransformerMLP):
     def __init__(
         self,
@@ -391,6 +391,48 @@ class CustomizedMoEPositionwiseFF(FMoETransformerMLP):
             output = self.layer_norm(inp + core_out)
 
         return output
+
+class CustomizedMoEPositionwiseFF_out(FMoETransformerMLP_out):
+    def __init__(
+        self,
+        gate,
+        hidden_size,
+        inner_hidden_size,
+        dropout,
+        pre_lnorm=False,
+        moe_num_expert=16,
+        moe_top_k=2,
+    ):
+        activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
+        super().__init__(
+            num_expert=moe_num_expert,
+            d_model=hidden_size,
+            d_hidden=inner_hidden_size,
+            moe_top_k=moe_top_k,
+            activation=activation,
+            gate=gate,
+        )
+        self.pre_lnorm = pre_lnorm
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, inp):
+        if self.pre_lnorm:
+            ##### layer normalization + positionwise feed-forward
+            core_out,counts = super().forward(self.layer_norm(inp))
+            core_out = self.dropout(core_out)
+
+            ##### residual connection
+            output = core_out + inp
+        else:
+            ##### positionwise feed-forward
+            core_out,counts = super().forward(inp)
+            core_out = self.dropout(core_out)
+
+            ##### residual connection + layer normalization
+            output = self.layer_norm(inp + core_out)
+
+        return output,counts
 
 class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
     def __init__(
@@ -434,7 +476,7 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
     def forward(self, inp, moment,att_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
-            core_out = super().forward(self.layer_norm(inp,att_weights))
+            core_out,counts = super().forward(self.layer_norm(inp,att_weights))
             core_out = self.dropout(core_out)
 
             ##### Momentum
@@ -443,14 +485,14 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
 
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,att_weights,self.cmp_size,self.graph_size)
+            core_out,counts = super().forward(inp,att_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             ##### Momentum
             moment = self.mu * moment + self.gamma2 * core_out
             output = self.layer_norm(inp - moment)
 
-        return output, moment
+        return output, moment,counts
 
 class CustomizedMoEPositionwiseFFMoM(FMoETransformerMLP):
     def __init__(
@@ -509,6 +551,64 @@ class CustomizedMoEPositionwiseFFMoM(FMoETransformerMLP):
 
         return output, moment
 
+class CustomizedMoEPositionwiseFFMoM_out(FMoETransformerMLP_out):
+    def __init__(
+        self,
+        gate,
+        hidden_size,
+        inner_hidden_size,
+        dropout,
+        pre_lnorm=False,
+        moe_num_expert=16,
+        moe_top_k=2,
+        gamma1=1.0,
+        gamma2=1.0,
+        mu=0.9,
+        beta1=0.9,
+        beta2=0.999,
+        layerth=0
+    ):
+        activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
+        super().__init__(
+            num_expert=moe_num_expert,
+            d_model=hidden_size,
+            d_hidden=inner_hidden_size,
+            moe_top_k=moe_top_k,
+            activation=activation,
+            gate=gate,
+        )
+        self.pre_lnorm = pre_lnorm
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout)
+        self.gamma1 = gamma1
+        self.gamma2= gamma2
+        self.mu = mu
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.layerth = layerth
+
+    def forward(self, inp, moment):
+        if self.pre_lnorm:
+            ##### layer normalization + positionwise feed-forward
+            core_out,counts = super().forward(self.layer_norm(inp))
+            core_out = self.dropout(core_out)
+
+            ##### Momentum
+            moment = self.mu * moment + self.gamma2 * core_out
+            output = inp - moment
+
+        else:
+            ##### positionwise feed-forward
+            core_out,counts = super().forward(inp)
+            core_out = self.dropout(core_out)
+
+            ##### Momentum
+            moment = self.mu * moment + self.gamma2 * core_out
+            output = self.layer_norm(inp - moment)
+
+        return output, moment,counts
+
+
 
 class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
     def __init__(
@@ -553,7 +653,7 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
     def forward(self, inp, moment,attn_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
-            core_out = super().forward(self.layer_norm(inp,attn_weights))
+            core_out,counts = super().forward(self.layer_norm(inp,attn_weights))
             core_out = self.dropout(core_out)
 
             if self.layerth < 1:
@@ -577,7 +677,7 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
 
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,attn_weights,self.cmp_size,self.graph_size)
+            core_out,counts = super().forward(inp,attn_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             if self.layerth < 1:
@@ -599,7 +699,7 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
                 momentum = self.mu * moment[2] + self.gamma2 * core_out
                 output = self.layer_norm(inp - momentum)
 
-        return output, (p, v, momentum)
+        return output, (p, v, momentum),counts
 
 class CustomizedMoEPositionwiseFFAdam(FMoETransformerMLP):
     def __init__(
@@ -687,6 +787,94 @@ class CustomizedMoEPositionwiseFFAdam(FMoETransformerMLP):
                 output = self.layer_norm(inp - momentum)
 
         return output, (p,v,momentum)
+
+
+class CustomizedMoEPositionwiseFFAdam_out(FMoETransformerMLP_out):
+    def __init__(
+            self,
+            gate,
+            hidden_size,
+            inner_hidden_size,
+            dropout,
+            pre_lnorm=False,
+            moe_num_expert=16,
+            moe_top_k=2,
+            gamma1=1.0,
+            gamma2=1.0,
+            mu=0.9,
+            beta1=0.9,
+            beta2=0.999,
+            layerth=0
+    ):
+        activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
+        super().__init__(
+            num_expert=moe_num_expert,
+            d_model=hidden_size,
+            d_hidden=inner_hidden_size,
+            moe_top_k=moe_top_k,
+            activation=activation,
+            gate=gate,
+        )
+        self.pre_lnorm = pre_lnorm
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout)
+        self.gamma1 = gamma1
+        self.gamma2 = gamma2
+        self.mu = mu
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.layerth = layerth
+
+    def forward(self, inp, moment):
+        if self.pre_lnorm:
+            ##### layer normalization + positionwise feed-forward
+            core_out,counts = super().forward(self.layer_norm(inp))
+            core_out = self.dropout(core_out)
+
+            if self.layerth < 1:
+                ##### ADAM
+                momentum = self.mu * moment[2] + self.gamma2 * core_out
+                p = moment[0]
+                v = moment[1]
+                p = self.beta1 * p + (1 - self.beta1) * core_out
+                v = self.beta2 * v + (1 - self.beta2) * (core_out ** 2)
+                adam = (self.gamma1 / torch.sqrt(v + 1e-8)) * p + inp
+
+                ##### residual connection + layer normalization
+                output = inp - adam
+
+            else:
+                ##### Momentum
+                p = moment[0]
+                v = moment[1]
+                momentum = self.mu * moment[2] + self.gamma2 * core_out
+                output = inp - momentum
+
+        else:
+            ##### positionwise feed-forward
+            core_out,counts = super().forward(inp)
+            core_out = self.dropout(core_out)
+
+            if self.layerth < 1:
+                ##### ADAM
+                momentum = self.mu * moment[2] + self.gamma2 * core_out
+                p = moment[0]
+                v = moment[1]
+                p = self.beta1 * p + (1 - self.beta1) * core_out
+                v = self.beta2 * v + (1 - self.beta2) * (core_out ** 2)
+                adam = (self.gamma1 / torch.sqrt(v + 1e-8)) * p + inp
+
+                ##### residual connection + layer normalization
+                output = self.layer_norm(inp - adam)
+
+            else:
+                ##### Momentum
+                p = moment[0]
+                v = moment[1]
+                momentum = self.mu * moment[2] + self.gamma2 * core_out
+                output = self.layer_norm(inp - momentum)
+
+        return output, (p, v, momentum),counts
 
 class CustomizedMoEPositionwiseFFOpt(FMoETransformerMLPOpt):
     def __init__(
@@ -825,6 +1013,15 @@ class TransformerSeqLayer(nn.Module):
                 )
                 if g is "g"
                 else
+                CustomizedMoEPositionwiseFF_out(
+                    gate,
+                    hidden_size=hidden_size,
+                    inner_hidden_size=inner_hidden_size,
+                    dropout=dropout,
+                    moe_top_k=moe_top_k,
+                )
+                if g is "p"
+                else
                 CausalCustomizedMoEPositionwiseFF(
                     gate,
                     hidden_size=hidden_size,
@@ -836,7 +1033,7 @@ class TransformerSeqLayer(nn.Module):
                 )
                 if g is "c"
                 else
-                CausalCustomizedMoEPositionwiseFFMoM(
+                CustomizedMoEPositionwiseFFMoM_out(
                     gate,
                     hidden_size=hidden_size,
                     inner_hidden_size=inner_hidden_size,
@@ -898,6 +1095,21 @@ class TransformerSeqLayer(nn.Module):
                 )
                 if g is "a"
                 else
+                CustomizedMoEPositionwiseFFAdam_out(
+                    gate,
+                    hidden_size=hidden_size,
+                    inner_hidden_size=inner_hidden_size,
+                    dropout=dropout,
+                    moe_top_k=moe_top_k,
+                    gamma1=gamma1,
+                    gamma2=gamma2,
+                    mu=mu,
+                    beta1=beta1,
+                    beta2=beta2,
+                    layerth=layerth,
+                )
+                if g is "q"
+                else
                 CausalCustomizedMoEPositionwiseFFAdam(
                     gate,
                     hidden_size=hidden_size,
@@ -931,14 +1143,14 @@ class TransformerSeqLayer(nn.Module):
         self.norm3 = nn.LayerNorm(hidden_size)
 
         self.use_attn = s == "s"
-        self.use_smoe = g == "g" or g == "m" or g == "a" or g == "c" or g == "k" or g == "t" or g == "d"
+        self.use_smoe = g == "g" or g == "m" or g == "a" or g == "c" or g == "t" or g == "d" or g == "k" or g == "q" or g == "p"
         self.use_ff = f == "f"
         self.g = g
 
     def forward(self, h, h_cache, moment, key_pe):
         # h = B x M x H
         # h_cache = B x L x H
-
+        counts=None
         if self.use_attn:
             h_all = torch.cat([h_cache, h], dim=1)  # B x (M+L) x H
             if self.g == "d" or self.g == "t" or self.g == "c":
@@ -949,19 +1161,25 @@ class TransformerSeqLayer(nn.Module):
         if self.use_smoe:
             if self.g == "m" or self.g == "a":
                 smoe_out, moment = self.smoe(h, moment)
-            elif self.g == "k" or self.g == "t":
-                smoe_out, moment = self.smoe(h, moment,attn_weights)
+            if self.g == "k" or self.g == "q":
+                smoe_out, moment,counts = self.smoe(h, moment)
+            elif self.g == "k" or self.g == "t" or self.g == "d":
+                smoe_out, moment,counts = self.smoe(h, moment,attn_weights)
             elif self.g == "g":
                 smoe_out = self.smoe(h)
+            elif self.g == "p":
+                smoe_out,counts = self.smoe(h)
             elif self.g == "c" :
-                smoe_out = self.smoe(h,attn_weights)
-            elif self.g == "d" :
-                smoe_out, moment = self.smoe(h, moment,attn_weights)
+                smoe_out,counts = self.smoe(h,attn_weights)
             h = self.norm2(h + smoe_out)  # B x M x H
         if self.use_ff:
             ff_out = self.ff(h)
             h = self.norm3(h + ff_out)  # B x M x H
-        return h, moment
+        if counts is None:
+            return h, moment
+        else:
+            return h, moment,counts
+
 
 class CausalMoE(nn.Module):
     def __init__(
@@ -1122,7 +1340,11 @@ class CausalMoE(nn.Module):
             moment = (torch.zeros_like(h),torch.zeros_like(h),torch.zeros_like(h))
         else:
             moment = torch.zeros_like(h)
+        counts_out = 1
+        if 'f' in self.arch:
+            counts_out = 2
         for l, layer in enumerate(self.layers):
+            is_last_layer = (l == len(self.layers) - counts_out)  # 判断是否是最后一层
             if layer.use_attn:
                 cache_size = layer.attn.attn.get_cache_size()
                 if cache_size > block_size:
@@ -1132,9 +1354,12 @@ class CausalMoE(nn.Module):
                 else:
                     h_cache_next_l = h[:, -cache_size:, :].detach()
                 h_cache_next.append(h_cache_next_l)
-                h, moment = layer(h, h_cache[l], moment, self.key_pe)  # B x M x H
+                if is_last_layer:
+                    h, moment,counts = layer(h, h_cache[l], moment, self.key_pe)
+                else:
+                    h, moment = layer(h, h_cache[l], moment, self.key_pe)  # B x M x H
             else:
                 h = layer(h, [], self.key_pe)
 
         out = F.log_softmax(self.out_emb(h), dim=-1)
-        return out, h_cache_next
+        return out, h_cache_next,counts

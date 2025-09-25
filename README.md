@@ -1,17 +1,5 @@
-## MomentumSMoE: Integrating Momentum into Sparse Mixture of Experts
-MomentumSMoE: Integrating Momentum into Sparse Mixture of Experts 
-
-https://arxiv.org/abs/2410.14574
-
-### Prerequisites
-
-- pytorch
-- fastmoe: https://github.com/laekov/fastmoe
-- The toolkit supports [Weights & Biases](https://docs.wandb.ai/) for monitoring jobs. If you use it, also install `wandb`.
 
 ### Usage
-
-
 #### Prepare WikiText-103 Datasets: 
 
 - Download the WikiText-103 dataset from [here](https://github.com/laekov/fastmoe/blob/master/examples/transformer-xl/scripts/getdata.sh), then change bash scripts based on your local data paths.
@@ -63,12 +51,13 @@ bash scripts/glam-mom-m.sh
 bash scripts/glam-adam-m.sh
 ```
 
-#### Wandb support:
-- Add these flags to bash script with your project and job name
-``` # Wandb: 
---wandb 
---project-name test 
---job-name test 
-```
-
+#### eval:
+##### causal:
+m->d
+a->t
+g->c
+##### mom-eval:
+m->k
+a->q
+g->p
 
