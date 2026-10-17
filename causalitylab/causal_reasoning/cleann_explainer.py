@@ -27,8 +27,8 @@ class CLEANN:
         # calculate correlation matrix from attention matrix
         cov_matrix = np.matmul(attention_matrix, attention_matrix.transpose(0,1))  # COV = A @ transpose(A)
         corr_mat = cov_to_corr(cov_matrix)
-
         # prepare for learning a graph
+        # p_val_th = np.percentile(corr_mat.ravel(), 50)
         num_vars, _ = corr_mat.shape  # number of graph-nodes
         if nodes_set is None:
             nodes_set = set(range(num_vars))
@@ -83,18 +83,6 @@ class CLEANN:
         if self.is_explanation is None:
             if len(full_explain_set) <= max_size:
                 explanations_list.append([full_explain_set, max_size])
-        else:
-            found_explanation = False
-            for set_size in range(1, max_size+1):
-                sets_list = pds_tree.get_subsets_list(set_nodes=full_explain_set, subset_size=set_size)
-                sets_list.sort(key=lambda x: x[1])  # sort with respect to the sum of minimal distances
-                for possible_explanation_set in sets_list:
-                    if self.is_explanation(list(possible_explanation_set[0]), target_node_idx):
-                        explanations_list.append(possible_explanation_set)
-                        found_explanation = True
-                if found_explanation and self._search_minimal:
-                    break
-
         results['explanations'] = explanations_list
         self.results[target_node_idx] = results
         return explanations_list

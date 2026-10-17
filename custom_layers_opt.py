@@ -324,7 +324,7 @@ class FMoEOpt(nn.Module):
                     if self.opt_blance:
                         fwd_tmp = None
                         for i in range(self.num_expert):
-                            
+
                             temp_ = (
                                 moe_inp @ self.experts.htoh4.weight[i].T
                                 + self.experts.htoh4.bias[i]
@@ -343,7 +343,7 @@ class FMoEOpt(nn.Module):
                     else:
                         fwd_tmp = None
                         for i in range(self.num_expert):
-                            
+
                             temp_ = (
                                 moe_inp @ self.experts.htoh4.weight[i].T
                                 + self.experts.htoh4.bias[i]

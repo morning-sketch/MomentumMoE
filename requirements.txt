@@ -1,6 +1,15 @@
-# torch==2.2.0 
-# numpy
+# Install the CUDA-compatible PyTorch build for your server first, e.g.:
+# pip install torch==2.2.0 --index-url https://download.pytorch.org/whl/cu121
+numpy
 ninja
 dm-tree
 tqdm
 torchmetrics==1.3.1
+networkx
+scipy
+pandas
+pyarrow
+transformers
+matplotlib
+Pillow
+openpyxl

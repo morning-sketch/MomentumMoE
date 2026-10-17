@@ -117,6 +117,7 @@ def launch(
     logging("=" * 100)
 
     # Load the best saved model.
+
     if not trainer_params["full_eval_mode"]:
         with open(trainer_params["pretrained_weight"], "rb") as f:
             pretrained_model = torch.load(f)

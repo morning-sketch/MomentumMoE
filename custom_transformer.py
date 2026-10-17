@@ -3,7 +3,7 @@ import argparse
 import math, random
 import torch
 import torch.nn as nn
-from custom_layers import FMoE
+from custom_layers import FMoE,FMoE_out
 from custom_layers import FMoELinear
 from custom_layers_opt import FMoEOpt
 
@@ -66,6 +66,42 @@ class FMoETransformerMLP(FMoE):
         inp = inp.reshape(-1, self.d_model)
         output = super().forward(inp)
         return output.reshape(original_shape)
+
+class FMoETransformerMLP_out(FMoE_out):
+    r"""
+    A complete MoE MLP module in a Transformer block.
+    * `activation` is the activation function to be used in MLP in each expert.
+    * `d_hidden` is the dimension of the MLP layer.
+    """
+
+    def __init__(
+        self,
+        num_expert=32,
+        d_model=1024,
+        d_hidden=4096,
+        activation=torch.nn.GELU(),
+        expert_dp_comm="none",
+        expert_rank=0,
+        moe_top_k=2,
+        **kwargs
+    ):
+        super().__init__(
+            num_expert=num_expert, d_model=d_model, moe_top_k=moe_top_k, **kwargs
+        )
+        self.experts = _Expert(
+            num_expert, d_model, d_hidden, activation, rank=expert_rank
+        )
+        self.mark_parallel_comm(expert_dp_comm)
+
+    def forward(self, inp: torch.Tensor):
+        r"""
+        This module wraps up the FMoE module with reshape, residual and layer
+        normalization.
+        """
+        original_shape = inp.shape
+        inp = inp.reshape(-1, self.d_model)
+        output,counts = super().forward(inp)
+        return output.reshape(original_shape),counts
 
 
 class FMoETransformerMLPOpt(FMoEOpt):

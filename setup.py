@@ -8,11 +8,11 @@ cxx_flags = []
 ext_libs = []
 
 authors = [
-        'Jiaao He', 
-        'Jiezhong Qiu', 
-        'Aohan Zeng', 
-        'Tiago Antunes', 
-        'Jinjun Peng', 
+        'Jiaao He',
+        'Jiezhong Qiu',
+        'Aohan Zeng',
+        'Tiago Antunes',
+        'Jinjun Peng',
         'Qin Li',
         'Mingshu Zhai'
 ]
@@ -51,7 +51,7 @@ if __name__ == '__main__':
         # packages=['fmoe', 'fmoe.megatron', 'fmoe.gates', 'fmoe.fastermoe'],
         ext_modules=[
             CUDAExtension(
-                name='fmoe_cuda', 
+                name='fmoe_cuda',
                 sources=[
                     # 'cuda/stream_manager.cpp',
                     # 'cuda/local_exchange.cu',

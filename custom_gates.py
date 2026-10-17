@@ -13,6 +13,7 @@ __all__ = [
     "CustomNaiveGate_Balance_SMoE",
     "CustomNaiveGate_Balance_XMoE",
     "CustomNaiveGate_Balance_StableMoE",
+    "CustomNaiveGate_Balance_SMoE_Causal",
 ]
 
 
@@ -66,6 +67,66 @@ class CustomNaiveGate_Balance_SMoE(BaseGate):
         if return_all_scores:
             return gate_top_k_idx, gate_score, gate
         return gate_top_k_idx, gate_score
+
+
+class CustomNaiveGate_Balance_SMoE_Causal(BaseGate):
+    def __init__(self, d_model, num_expert, world_size, top_k=2, g_blance=False):
+        super().__init__(num_expert, world_size)
+        self.gate = nn.Linear(d_model, self.tot_expert)
+        self.top_k = top_k
+        self.dense_moe_flag = False
+        self.g_blance = g_blance
+        self.loss = None
+
+    def set_load_balance(self, gate, gate_top_k_idx):
+
+        score = F.softmax(gate, dim=-1)
+        valid_idx = gate_top_k_idx[gate_top_k_idx > -1]
+        fraction_expert = (
+            torch.scatter_add(
+                torch.zeros(self.tot_expert, device=valid_idx.device),
+                0,
+                valid_idx,
+                torch.ones_like(valid_idx, dtype=torch.float),
+            )
+            / valid_idx.numel()
+        )
+        prob_expert = score.sum(dim=0) / valid_idx.numel()
+
+        loss = (fraction_expert * prob_expert).sum() * self.tot_expert
+        self.loss = loss
+
+    def forward(self, inp,share_expert_k_list, return_all_scores=False):
+
+        gate = self.gate(inp)
+        if self.dense_moe_flag:
+            gate = torch.ones_like(gate)  # average the importance of all experts
+            gate_top_k_val, gate_top_k_idx = torch.topk(
+                gate, k=self.tot_expert, dim=-1, largest=True, sorted=False
+            )
+            gate_top_k_val = gate_top_k_val.view(-1, self.tot_expert)
+        else:
+            gate_top_k_val, gate_top_k_idx = torch.topk(
+                gate, k=self.top_k, dim=-1, largest=True, sorted=True
+            )  # [.. x top_k]
+            gate_top_k_val = gate_top_k_val.view(-1, self.top_k)  # (BxL) x 1 x top_k
+
+        gate_top_k_idx=gate_top_k_idx.clone()
+        gate_score=gate_top_k_val.clone()
+        share_expert_k_list = share_expert_k_list.to(gate_top_k_idx.dtype)
+        mask = share_expert_k_list[:, 0] != 0
+        if mask.any():
+            gate_top_k_idx[mask,-1] = share_expert_k_list[mask,0]
+            gate_score[mask,-1] = gate_score[mask,0]+gate_score[mask,1]
+            gate_score[~mask,-1]=0
+        gate_score = F.softmax(gate_score, dim=-1)
+        if self.g_blance:
+            self.set_load_balance(gate, gate_top_k_idx)
+
+        if return_all_scores:
+            return gate_top_k_idx, gate_score, gate
+        return gate_top_k_idx, gate_score
+
 
 
 class CustomNaiveGate_Balance_XMoE(BaseGate):

@@ -1,3 +1,29 @@
-wandb/
-data_directory/wikitext-103/*
-.idea/vcs.xml
+# Python
+__pycache__/
+*.py[cod]
+*.swp
+
+# IDE / OS
+.idea/
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Runtime outputs
+checkpoints/
+runs/
+my_custom_tokenizer/
+corpus_a1.pt
+log.txt
+*.log
+*.pt
+*.pth
+
+# Datasets: keep preparation code and the small MBPP vocabulary.
+data_directory/**/*.parquet
+data_directory/**/*.json
+data_directory/**/*.txt
+!data_directory/MBPP/tokenizer/vocab.json

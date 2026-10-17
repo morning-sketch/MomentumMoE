@@ -139,4 +139,3 @@ for head_id in range(last_mh_attention.shape[1]):
 
 node_labels = {node: tokens[node] for node in range(len(encoded_input.input_ids[0]))}
 fig = draw_graph(found_explanations[8]['graph'], node_labels=node_labels, node_size_factor=2.0)
-

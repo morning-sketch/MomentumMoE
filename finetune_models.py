@@ -61,7 +61,7 @@ class SeqAttention(nn.Module):
             key, value, key_pe = self.adaptive_span.trim_memory(
                 query, key, value, key_pe
             )
-            
+
         ############## RPC ###############
         # B, M, H = query.shape
         # mu = M*H/8/query.norm(p=1,dim=[-1,-2],keepdim=True)
@@ -69,7 +69,7 @@ class SeqAttention(nn.Module):
         # l = torch.zeros_like(query).to(torch.device("cuda"))
         # y = torch.zeros_like(query).to(torch.device("cuda"))
         # for i in range(0,1):
-        #     s = (query-l+y/(mu+1e-8)) 
+        #     s = (query-l+y/(mu+1e-8))
         #     s_less = s.le(-lambd/(mu+1e-8)).int()
         #     s_more = s.ge(lambd/(mu+1e-8)).int()
         #     s = (s-lambd/(mu+1e-8))*s_more + (s+lambd/(mu+1e-8))*s_less
@@ -84,8 +84,8 @@ class SeqAttention(nn.Module):
         #     # l = F.softmax(l, dim=-1)
         #     # l = torch.matmul(l, value)
         #     # y = y+mu*(query2-l-s)
-        
-        # # s = (query-l+y/(mu+1e-8)) 
+
+        # # s = (query-l+y/(mu+1e-8))
         # # s_less = s.le(-lambd/(mu+1e-8)).int()
         # # s_more = s.ge(lambd/(mu+1e-8)).int()
         # # s = (s-lambd/(mu+1e-8))*s_more + (s+lambd/(mu+1e-8))*s_less
@@ -309,7 +309,7 @@ class TransformerSeqLayer(nn.Module):
 
         self.attn = (
             MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout, **kargs)
-            if s is "s"
+            if s == "s"
             else None
         )
         if optimal_policy:
@@ -328,7 +328,7 @@ class TransformerSeqLayer(nn.Module):
                     combine_gate=combine_gate,
                     opt_loss=opt_loss,
                 )
-                if g is "g"
+                if g == "g"
                 else None
             )
         else:
@@ -340,7 +340,7 @@ class TransformerSeqLayer(nn.Module):
                     dropout=dropout,
                     moe_top_k=moe_top_k,
                 )
-                if g is "g"
+                if g == "g"
                 else None
             )
 
@@ -350,7 +350,7 @@ class TransformerSeqLayer(nn.Module):
                 inner_hidden_size=inner_hidden_size,
                 dropout=dropout,
             )
-            if f is "f"
+            if f == "f"
             else None
         )
         self.norm1 = nn.LayerNorm(hidden_size)

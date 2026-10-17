@@ -26,7 +26,7 @@ def global_policy(local_expert_count, _gec, num_expert, world_size):
     all_global_expert_count = torch.stack(agecs)
 
     # TODO: data type other than float
-    data_size = 4 
+    data_size = 4
 
     fwd_expert_counts = all_global_expert_count.sum(1).cpu()
     B_ws, indices = fwd_expert_counts.flatten().sort(0, descending=True)

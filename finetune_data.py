@@ -312,7 +312,7 @@ class Corpus(object):
             # self.vocab.count_sst5(os.path.join(path, "dev.tsv"), add_cls_token=True)
             self.vocab.count_sst5(train, add_cls_token=True)
             self.vocab.count_sst5(val, add_cls_token=True)
-            
+
         elif self.dataset == "banking77":
             self.vocab.count_banking77(
                 os.path.join(path, "train.tsv"), add_cls_token=True

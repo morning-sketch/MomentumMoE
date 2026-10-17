@@ -3,7 +3,7 @@ import torch
 from torch.autograd.function import Function
 
 from fmoe.functions import prepare_forward, ensure_comm
-from fmoe.functions import _local_scatter, _local_gather 
+from fmoe.functions import _local_scatter, _local_gather
 import fmoe_cuda as fmoe_native
 from fmoe.fastermoe import expert_utils
 
@@ -51,18 +51,18 @@ class MoEForward(Function):
 
         local_output_buf, gib = fmoe_native.smart_sch_forward(
                 local_input_buf,
-                local_expert_count, global_expert_count, 
+                local_expert_count, global_expert_count,
                 stored_models, fwd_batch_size, ctx.expert_size,
                 world_size, _expert_forward, get_param_fn, stash_fn, pop_fn)
 
         out = _local_gather(local_output_buf, pos_g, out_batch_size,
                 maybe_overlap=False)
-        
+
         # gib and local_input_buf are necessary, because ctx.gibs are created
         # based on their memory
         variables = (pos_s, pos_g, local_expert_count, global_expert_count,
                 stored_models, gib, local_input_buf)
-        
+
         ctx.moe_args = fwd_batch_size, inp.shape[0], world_size
         ctx.save_for_backward(*variables)
 
@@ -84,7 +84,7 @@ class MoEForward(Function):
         def stash_fn(idx):
             expert_utils.stash_expert_params(experts, ctx.shadows[idx])
         pop_fn = lambda: expert_utils.pop_expert_params(experts)
-        def collect_fn(idx, root): 
+        def collect_fn(idx, root):
             grad = ctx.shadows[idx]
             expert_utils.collect_expert_grads(experts, grad)
             fmoe_native.reduce_grad(grad, root, ctx.expert_size)

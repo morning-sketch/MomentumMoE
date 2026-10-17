@@ -64,7 +64,7 @@ class FasterGate(NaiveGate):
                         dtype=torch.bool)
             else:
                 # TODO: Fix this after expert shadowing is ported
-                _, lec, aec, gec, agec = count_by_gate(top2_idx, 
+                _, lec, aec, gec, agec = count_by_gate(top2_idx,
                         self.num_expert, self.world_size, require_pos=False)
                 stored_models = self.policy_fn(aec, agec,
                         self.num_expert, self.world_size, inp.shape[-1], True)

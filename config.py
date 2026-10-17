@@ -63,6 +63,18 @@ PARAMS_CONFIG = {
             "help": "block size " "(the length of sequence to process in parallel)",
             "dest": "block_size",
         },
+        "--cmp-sz": {
+            "type": int,
+            "default": 64,
+            "help": "cmp_size " "(The compression size of the attention key value)",
+            "dest": "cmp_size",
+        },
+        "--graph-sz": {
+            "type": int,
+            "default": 8,
+            "help": "The number of nodes in a causal graph",
+            "dest": "graph_size",
+        },
         "--nheads": {
             "type": int,
             "default": 2,
@@ -234,6 +246,12 @@ PARAMS_CONFIG = {
     },
     # trainer-specific
     "trainer_params": {
+        "--causal-loss": {
+            "action": "store_true",
+            "default": False,
+            "help": "enable causal_loss",
+            "dest": "causal_loss",
+        },
         "--batch-sz": {
             "type": int,
             "default": 64,
@@ -272,7 +290,7 @@ PARAMS_CONFIG = {
         },
         "--pretrained_weight": {
             "type": str,
-            "default": "/hy-tmp/checkpoint_glam/smoe.pt",
+            "default": None,
             "help": "path to save/load model",
             "dest": "pretrained_weight",
         },

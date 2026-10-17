@@ -1,0 +1,35 @@
+{
+  "pretrain": {
+    "data_subdir": "wikitext-103",
+    "niter": 80,
+    "batch_size": 24,
+    "batch_split": 8,
+    "nbatches": 1000
+  },
+  "finetune_code": {
+    "niter": 10,
+    "batch_size": 1,
+    "batch_split": 1,
+    "nbatches": 1000,
+    "datasets": [
+      "HumanEval",
+      "MBPP",
+      "APPS",
+      "Codeforces"
+    ]
+  },
+  "corr2cause": {
+    "data_subdir": "corr2cause",
+    "niter": 3,
+    "batch_size": 24,
+    "batch_split": 8,
+    "nbatches": 1000
+  },
+  "causalbench": {
+    "data_subdir": "causal-bench",
+    "niter": 3,
+    "batch_size": 24,
+    "batch_split": 8,
+    "nbatches": 1000
+  }
+}

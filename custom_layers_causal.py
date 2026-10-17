@@ -1,6 +1,8 @@
-import os, sys
-import argparse
-import math, random
+import math
+import os
+import sys
+
+import numpy as np
 import torch
 import torch.nn as nn
 import tree
@@ -9,25 +11,17 @@ from custom_functions import prepare_forward, ensure_comm
 from custom_functions import MOEScatter, MOEGather
 from custom_functions import AllGather, Slice
 from gates import NaiveGate
-
+from functools import partial
 from fastermoe.config import switch_from_env
 
-"""for causal map start """
-import sys
-sys.path.append("/hy-tmp/causalitylab")
+# Use the bundled causalitylab package instead of a machine-specific path.
+_CAUSALITYLAB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "causalitylab")
+if _CAUSALITYLAB_DIR not in sys.path:
+    sys.path.insert(0, _CAUSALITYLAB_DIR)
+
 from causal_reasoning import CLEANN
-from experiment_utils.explanation import exhaustive_search_explanation
-from causal_discovery_utils.stat_utils import cov_to_corr
-from itertools import combinations
-import matplotlib.pyplot as plt
 
-import numpy as np
-import networkx as nx
-from networkx.algorithms.community import kernighan_lin_bisection
-import multiprocessing
-"""for causal map end """
-
-def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims,):
+def split_graph_into_equal_size_subgraphs(adj_matrix,hidden_dims,cmp_size):
     """
     将给定邻接矩阵表示的图划分为固定数量且节点数量尽量相同的子图。
 
@@ -40,55 +34,24 @@ def split_graph_into_equal_size_subgraphs(adj_matrix, num_subgraphs,hidden_dims,
     """
     # 创建初始图
     nodes_of_interest = {i for i in range(adj_matrix.shape[0])}
-    cov_matrix = np.matmul(adj_matrix, adj_matrix.transpose(0, 1))  # COV = A @ transpose(A)
-    corr_mat = cov_to_corr(cov_matrix)
-    flattened_arr = corr_mat.numpy().ravel()
-    percentile_70_value = np.percentile(flattened_arr, 70)
-    explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=percentile_70_value,
+    explainer = CLEANN(attention_matrix=adj_matrix, num_samples=hidden_dims, p_val_th=1e-2,
                        explanation_tester=None, nodes_set=nodes_of_interest)
-    learn_matrix = explainer.learn_graph().get_skeleton_mat()
-    G = nx.from_numpy_array(learn_matrix)
-
-    # 存储划分后的子图
-    subgraphs = [G]
-    while len(subgraphs) < num_subgraphs:
-        new_subgraphs = []
-        for subgraph in subgraphs:
-            if subgraph.number_of_nodes() <= 1:
-                new_subgraphs.extend([subgraph])
-                continue
-            # 使用kernighan_lin_bisection进行二分图划分，尽量均匀地划分
-            part1, part2 = kernighan_lin_bisection(subgraph)
-            subgraph1 = subgraph.subgraph(part1)
-            subgraph2 = subgraph.subgraph(part2)
-            new_subgraphs.extend([subgraph1, subgraph2])
-        subgraphs = new_subgraphs
-
-    # 如果划分后子图数量超过期望数量，合并一些子图使数量符合要求且尽量均衡节点数量
-    while len(subgraphs) > num_subgraphs:
-        # 找到节点数量最少和次少的两个子图
-        sorted_subgraphs = sorted(subgraphs, key=lambda x: x.number_of_nodes())
-        min_subgraph1 = sorted_subgraphs[0]
-        min_subgraph2 = sorted_subgraphs[1]
-        combined_subgraph = nx.compose(min_subgraph1, min_subgraph2)
-        subgraphs.remove(min_subgraph1)
-        subgraphs.remove(min_subgraph2)
-        subgraphs.append(combined_subgraph)
     ret=[]
-    for i, subgraph in enumerate(subgraphs):
-        subgraph=list(subgraph.nodes())
-        ret.append(subgraph)
+    row_means=adj_matrix.mean(axis=1)
+    max_mean_row_index = np.argmax(row_means)
+    explain_ret = explainer.explain(target_node_idx=max_mean_row_index)
+    ret.append(get_real_index(max_mean_row_index, cmp_size))
+    if len(explain_ret)!=0:
+        for j in explain_ret[-1][0]:
+            ret[-1]=ret[-1]+get_real_index(j,cmp_size)
     return ret
 
-def cal_expert(attn_weights, num_subgraphs, hidden_dims):
-    batch_size=int(attn_weights.shape[0])
-    graph_tensor=[]
-    for i in range(batch_size):
-        graph_tensor.append((attn_weights[i],num_subgraphs,hidden_dims))
-    with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
-        rets= pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-    return rets
 
+def get_real_index(index,cmp_size):
+    real_index=[]
+    for i in range(cmp_size):
+        real_index.append(index*cmp_size+i)
+    return real_index
 
 def mark_module_parallel_comm(module, comm):
     r"""
@@ -211,7 +174,7 @@ class FMoE(nn.Module):
         else:
             self.slice_size = self.slice_group.size()
             self.slice_rank = self.slice_group.rank()
-
+        self.share_expert_num = 1
         self.top_k = moe_top_k
         if type(expert) is list:
             self.experts = nn.ModuleList([e(d_model) for e in expert])
@@ -223,11 +186,15 @@ class FMoE(nn.Module):
         else:
             self.experts_fused = True
 
-        self.gate = gate(d_model, num_expert, world_size, moe_top_k)
+        self.gate = gate(d_model, num_expert-self.share_expert_num, world_size, self.top_k)
         self.gate_hook = gate_hook
         self.mask = mask
         self.mask_dict = mask_dict
         self.moe_group = moe_group
+        self.sigmoid_mlp=nn.Sequential(
+            nn.Linear(d_model*2, 1),
+            nn.Sigmoid()
+        )
 
     def expert_fn(self, inp, fwd_expert_count):
         r"""
@@ -262,35 +229,29 @@ class FMoE(nn.Module):
                 mark_module_parallel_comm(self.experts, comm)
         mark_module_parallel_comm(self.gate, "gate")
 
-    def forward(self, moe_inp,attn_weights):
+    def forward(self, moe_inp,attn_weights,cmp_size,graph_size):
         r"""
         The FMoE module first computes gate output, and then conduct MoE forward
         according to the gate.  The score of the selected gate given by the
         expert is multiplied to the experts' output tensors as a weight.
         """
-
         """start causal mapping"""
-        moe_causal_inp=moe_inp.clone()
         with torch.no_grad():
-            attn_weights=attn_weights.cpu()
-            num_subgraphs=4
-            attn_weights=torch.mean(attn_weights, dim=0)
-            graph_tensor=[]
-            splitsize=32
-            blsize=int(attn_weights.shape[0]/splitsize)
-            for add_index in range(splitsize):
-                graph_tensor.append((attn_weights[add_index*blsize:add_index*blsize+blsize,add_index*blsize:add_index*blsize+blsize], num_subgraphs, moe_inp.shape[-1]))
-            with multiprocessing.Pool(processes=len(graph_tensor)) as pool:
-                rets= pool.starmap(split_graph_into_equal_size_subgraphs, graph_tensor)
-            for add_index in range(splitsize):
-                for j in range(len(rets[add_index])):
-                    for k in range(1, len(rets[add_index][j])):
-                        moe_causal_inp[rets[add_index][j][0]+blsize*add_index] += moe_causal_inp[rets[add_index][j][k]+blsize*add_index]
-                    moe_causal_inp[rets[add_index][j][0] + blsize * add_index]/=len(rets[add_index][j])
-                    for k in range(1, len(rets[add_index][j])):
-                        moe_causal_inp[rets[add_index][j][k] + blsize * add_index] = moe_causal_inp[rets[add_index][j][0] + blsize * add_index]
-        """end causal mapping"""
+            #将attn_weights变成numpy数组
+            attn_weights=attn_weights.cpu().numpy()
+            rets=[]
+            splitnum = int(attn_weights.shape[1] / graph_size)
+            for f_index in range(attn_weights.shape[0]):
+                for add_index in range(splitnum):
+                    splite_slice = slice(add_index * graph_size, add_index * graph_size + graph_size)
+                    rets.append(split_graph_into_equal_size_subgraphs(attn_weights[f_index][splite_slice, splite_slice], moe_inp.shape[-1],cmp_size=cmp_size))
 
+            share_expert_k_list = torch.zeros((moe_inp.shape[0], 1))
+            for add_index in range(len(rets)):
+                for j in range(len(rets[add_index])):
+                    for k in range(0, len(rets[add_index][j])):
+                        share_expert_k_list[add_index*graph_size*cmp_size+rets[add_index][j][k]] = self.num_expert-1
+            """end causal mapping"""
         moe_inp_batch_size = tree.flatten(
             tree.map_structure(lambda tensor: tensor.shape[0], moe_inp)
         )
@@ -313,9 +274,10 @@ class FMoE(nn.Module):
 
             moe_inp = tree.map_structure(slice_func, moe_inp)
 
-
-        gate_top_k_idx, gate_score = self.gate(moe_causal_inp)
-
+        share_expert_k_list = share_expert_k_list.to(moe_inp.device)
+        gate_top_k_idx, gate_score = self.gate(inp=moe_inp)
+        share_expert_k_list = share_expert_k_list.to(gate_top_k_idx.dtype)
+        # gate_top_k_idx,gate_score=combinations_gate_top(gate_top_k_idx,share_expert_k_list,gate_score)
         if hasattr(self.gate, "dynamic_top_k"):
             self.top_k = self.gate.dynamic_top_k
 
@@ -333,6 +295,7 @@ class FMoE(nn.Module):
             mask = self.mask.view(-1)
             moe_inp = tree.map_structure(delete_mask_func, moe_inp)
             gate_top_k_idx = gate_top_k_idx[mask == 0, :]
+            share_expert_k_list=share_expert_k_list[mask == 0, :]
 
         fwd = _fmoe_general_global_forward(
             moe_inp,
@@ -342,18 +305,26 @@ class FMoE(nn.Module):
             self.world_size,
             experts=self.experts,
         )
-
+        share_mask = share_expert_k_list[:, 0] != 0
+        share_fwd = _fmoe_general_global_forward(
+            moe_inp[share_mask],
+            share_expert_k_list[share_mask],
+            self.expert_fn,
+            self.num_expert,
+            self.world_size,
+            experts=self.experts,
+        )
         # recover deleted tensors
         if self.mask is not None and self.mask_dict is not None:
 
-            def recover_func(tensor):
+            def recover_func(tensor,tok):
                 # to: (BxL') x top_k x dim
                 dim = tensor.shape[-1]
-                tensor = tensor.view(-1, self.top_k, dim)
+                tensor = tensor.view(-1, tok, dim)
                 # to: (BxL) x top_k x d_model
                 x = torch.zeros(
                     mask.shape[0],
-                    self.top_k,
+                    tok,
                     dim,
                     device=tensor.device,
                     dtype=tensor.dtype,
@@ -364,15 +335,18 @@ class FMoE(nn.Module):
                     x[mask == k] = v
                 return x
 
-            moe_outp = tree.map_structure(recover_func, fwd)
+            moe_outp = tree.map_structure(partial(recover_func,tok=self.top_k), fwd)
+            share_fwd = tree.map_structure(partial(recover_func, tok=self.share_expert_num), share_fwd)
         else:
 
-            def view_func(tensor):
+            def view_func(tensor,tok):
                 dim = tensor.shape[-1]
-                tensor = tensor.view(-1, self.top_k, dim)
+                tensor = tensor.view(-1, tok, dim)
                 return tensor
 
-            moe_outp = tree.map_structure(view_func, fwd)
+            moe_outp = tree.map_structure(partial(view_func, tok=self.top_k), fwd)
+            share_fwd = tree.map_structure(partial(view_func, tok=self.share_expert_num), share_fwd)
+
 
         gate_score = gate_score.view(-1, 1, self.top_k)
 
@@ -382,9 +356,10 @@ class FMoE(nn.Module):
             return tensor
 
         moe_outp = tree.map_structure(bmm_func, moe_outp)
-
+        share_fwd=share_fwd.squeeze(1)
+        sg=self.sigmoid_mlp(torch.cat((moe_outp[share_mask], share_fwd),dim=-1))
+        moe_outp[share_mask]=moe_outp[share_mask]*sg+(1-sg)*share_fwd
         if self.slice_size > 1:
-
             def all_gather_func(tensor):
                 return AllGather.apply(
                     tensor, self.slice_rank, self.slice_size, self.slice_group
@@ -398,7 +373,15 @@ class FMoE(nn.Module):
         assert all(
             [batch_size == moe_outp_batch_size[0] for batch_size in moe_outp_batch_size]
         ), "MoE outputs must have the same batch size"
-        return moe_outp
+        # 将二维张量展平为一维
+        flat_indices = gate_top_k_idx.view(-1)
+
+        # 统计每个整数出现的次数
+        counts = torch.bincount(flat_indices, minlength=self.num_expert-1)  # minlength设为15确保统计0-14
+        new_counts = torch.zeros(self.num_expert, dtype=counts.dtype, device=counts.device)
+        new_counts[:self.num_expert-1] = counts
+        new_counts[self.num_expert-1]=torch.count_nonzero(share_mask)
+        return moe_outp,new_counts
 
 
 ##############################################################################

@@ -5,11 +5,32 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
-from custom_transformer import FMoETransformerMLP, FMoETransformerMLPOpt
+from custom_transformer import FMoETransformerMLP, FMoETransformerMLPOpt,FMoETransformerMLP_out
 from custom_transformer_causal import CausalFMoETransformerMLP, CausalFMoETransformerMLPOpt
 from custom_gates import *
 import cmath
 
+
+class CompressionMLP(nn.Module):
+    def __init__(self, n, c, d):
+        super(CompressionMLP, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(n, n * d),
+            nn.ReLU(),
+            nn.Linear(n * d, n // c)
+        )
+
+    def forward(self, x):
+        b, n, d = x.shape
+        # 调整输入张量的形状以适应线性层
+        x = x.permute(0, 2, 1).contiguous()
+        x = x.view(-1, n)
+        # 通过 MLP 进行压缩
+        x = self.mlp(x)
+        # 恢复形状
+        x = x.view(b, d, -1)
+        x = x.permute(0, 2, 1).contiguous()
+        return x
 
 # Size notations:
 # B = batch_size, H = hidden_size, M = block_size, L = attn_span
@@ -34,14 +55,11 @@ def _unskew(X):
     X = X.view(B, M, M + L + 1)  # B x M x L+M+1
     X = X[:, :, :L]  # B x M x L
     return X
-
-
 class SeqAttention(nn.Module):
     """Sequential self-attention layer.
     Each token will attend to its previous fixed number of steps.
     Note that attention doesn't include the current step itself.
     """
-
     def __init__(self, hidden_size, attn_span, dropout, adapt_span_params, **kargs):
         nn.Module.__init__(self)
         self.dropout = nn.Dropout(dropout)
@@ -67,8 +85,67 @@ class SeqAttention(nn.Module):
         # B x M (dest) x (M+L) (src)
         attn_cont = torch.matmul(query, key.transpose(-1, -2))
         attn_cont = _unskew(attn_cont)  # B x M x L
-        anum=int(attn_cont.shape[2]-attn_cont.shape[1])
-        attn_weight=F.softmax(attn_cont[:,:,anum:]/ math.sqrt(self.hidden_size), dim=-1)
+        # compute the effect of position embedding
+        attn_pos = torch.matmul(query, key_pe)  # B x M x L_pos
+        attn = attn_cont + attn_pos
+
+
+        attn = attn / math.sqrt(self.hidden_size)  # B x M X L_pos
+        attn = F.softmax(attn, dim=-1)
+
+        if self.adapt_span_enabled:
+            # trim attention lengths according to the learned span
+            attn = self.adaptive_span(attn)
+        attn = self.dropout(attn)  # B x M X L_pos
+
+        attn_cont = _skew(attn, 0)  # B x M X (L+M)
+        out = torch.matmul(attn_cont, value)  # B x M x H
+
+        return out
+
+    def get_cache_size(self):
+        if self.adapt_span_enabled:
+            return self.adaptive_span.get_cache_size()
+        else:
+            return self.attn_span
+
+class Causal_SeqAttention(nn.Module):
+    """Sequential self-attention layer.
+    Each token will attend to its previous fixed number of steps.
+    Note that attention doesn't include the current step itself.
+    """
+    def __init__(self, hidden_size, attn_span, dropout,block_size,cmp_size, adapt_span_params, **kargs):
+        nn.Module.__init__(self)
+        self.dropout = nn.Dropout(dropout)
+        self.hidden_size = hidden_size  # size of a single head
+        self.attn_span = attn_span
+        self.adapt_span_enabled = adapt_span_params["adapt_span_enabled"]
+        if self.adapt_span_enabled:
+            self.adaptive_span = AdaptiveSpan(
+                attn_span=attn_span, **adapt_span_params, **kargs
+            )
+        self.q_compress_mlp = CompressionMLP(n=block_size, c=cmp_size, d=1)
+        self.k_compress_mlp = CompressionMLP(n=block_size, c=cmp_size, d=1)
+
+    def forward(self, query, key, value, key_pe):
+        # query size = B x M x H
+        # key, value sizes = B x (M+L) x H
+
+        if self.adapt_span_enabled:
+            # [optional] trim out memory to reduce unnecessary computation
+            key, value, key_pe = self.adaptive_span.trim_memory(
+                query, key, value, key_pe
+            )
+
+        # compute attention from context
+        # B x M (dest) x (M+L) (src)
+        attn_cont = torch.matmul(query, key.transpose(-1, -2))
+        attn_cont = _unskew(attn_cont)  # B x M x L
+
+        cmp_key=self.k_compress_mlp(key[:,-query.shape[1]:,:])
+        cmp_query=self.q_compress_mlp(query)
+        attn_cont_cmp = torch.matmul(cmp_query, cmp_key.transpose(-1, -2))
+        attn_weight=F.softmax(attn_cont_cmp/ math.sqrt(self.hidden_size), dim=-1)
         # compute the effect of position embedding
         attn_pos = torch.matmul(query, key_pe)  # B x M x L_pos
         attn = attn_cont + attn_pos
@@ -92,7 +169,49 @@ class SeqAttention(nn.Module):
             return self.adaptive_span.get_cache_size()
         else:
             return self.attn_span
+class Causal_MultiHeadSeqAttention(nn.Module):
+    def __init__(self, hidden_size, nb_heads,block_size, **kargs):
+        nn.Module.__init__(self)
+        assert hidden_size % nb_heads == 0
+        self.nb_heads = nb_heads
+        self.head_dim = hidden_size // nb_heads
+        self.attn = Causal_SeqAttention(hidden_size=self.head_dim, nb_heads=nb_heads,block_size=block_size, **kargs)
+        self.proj_query = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.proj_out = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.proj_val = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.proj_key = nn.Linear(hidden_size, hidden_size, bias=False)
 
+    def head_reshape(self, x):
+        K = self.nb_heads
+        D = self.head_dim
+        x = x.view(x.size()[:-1] + (K, D))  # B x (M+L) x K x D
+        x = x.transpose(1, 2).contiguous()  # B x K x (M+L) x D
+        x = x.view(-1, x.size(-2), x.size(-1))  # B_K x (M+L) x D
+        return x
+
+    def forward(self, query, key, value, key_pe):
+        B = query.size(0)
+        K = self.nb_heads
+        D = self.head_dim
+        M = query.size(1)
+
+        query = self.proj_query(query)
+        query = self.head_reshape(query)
+        value = self.proj_val(value)
+        value = self.head_reshape(value)
+        key = self.proj_key(key)
+        key = self.head_reshape(key)
+
+        out, att_weight = self.attn(query, key, value, key_pe)  # B_K x M x D
+
+        att_weight=att_weight.view(B,K,att_weight.shape[-1],att_weight.shape[-1])
+        att_weight=att_weight.mean(1)
+
+        out = out.view(B, K, M, D)  # B x K x M x D
+        out = out.transpose(1, 2).contiguous()  # B x M x K x D
+        out = out.view(B, M, -1)  # B x M x K_D
+        out = self.proj_out(out)
+        return out,att_weight
 
 class MultiHeadSeqAttention(nn.Module):
     def __init__(self, hidden_size, nb_heads, **kargs):
@@ -127,12 +246,12 @@ class MultiHeadSeqAttention(nn.Module):
         key = self.proj_key(key)
         key = self.head_reshape(key)
 
-        out, att_weight = self.attn(query, key, value, key_pe)  # B_K x M x D
+        out= self.attn(query, key, value, key_pe)  # B_K x M x D
         out = out.view(B, K, M, D)  # B x K x M x D
         out = out.transpose(1, 2).contiguous()  # B x M x K x D
         out = out.view(B, M, -1)  # B x M x K_D
         out = self.proj_out(out)
-        return out,att_weight
+        return out
 
 class MultiHeadSeqSymAttention(nn.Module):
     def __init__(self, hidden_size, nb_heads, **kargs):
@@ -198,6 +317,8 @@ class CausalCustomizedMoEPositionwiseFF(CausalFMoETransformerMLP):
         pre_lnorm=False,
         moe_num_expert=16,
         moe_top_k=2,
+        cmp_size=0,
+        graph_size=0,
     ):
         activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
         super().__init__(
@@ -211,22 +332,24 @@ class CausalCustomizedMoEPositionwiseFF(CausalFMoETransformerMLP):
         self.pre_lnorm = pre_lnorm
         self.layer_norm = nn.LayerNorm(hidden_size)
         self.dropout = nn.Dropout(dropout)
+        self.cmp_size=cmp_size
+        self.graph_size=graph_size
     def forward(self, inp,attn_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
-            core_out = super().forward(self.layer_norm(inp,attn_weights))
+            core_out,counts = super().forward(self.layer_norm(inp,attn_weights))
             core_out = self.dropout(core_out)
 
             ##### residual connection
             output = core_out + inp
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,attn_weights)
+            core_out,counts = super().forward(inp,attn_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             ##### residual connection + layer normalization
             output = self.layer_norm(inp + core_out)
-        return output
+        return output,counts
 class CustomizedMoEPositionwiseFF(FMoETransformerMLP):
     def __init__(
         self,
@@ -269,6 +392,48 @@ class CustomizedMoEPositionwiseFF(FMoETransformerMLP):
 
         return output
 
+class CustomizedMoEPositionwiseFF_out(FMoETransformerMLP_out):
+    def __init__(
+        self,
+        gate,
+        hidden_size,
+        inner_hidden_size,
+        dropout,
+        pre_lnorm=False,
+        moe_num_expert=16,
+        moe_top_k=2,
+    ):
+        activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
+        super().__init__(
+            num_expert=moe_num_expert,
+            d_model=hidden_size,
+            d_hidden=inner_hidden_size,
+            moe_top_k=moe_top_k,
+            activation=activation,
+            gate=gate,
+        )
+        self.pre_lnorm = pre_lnorm
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, inp):
+        if self.pre_lnorm:
+            ##### layer normalization + positionwise feed-forward
+            core_out,counts = super().forward(self.layer_norm(inp))
+            core_out = self.dropout(core_out)
+
+            ##### residual connection
+            output = core_out + inp
+        else:
+            ##### positionwise feed-forward
+            core_out,counts = super().forward(inp)
+            core_out = self.dropout(core_out)
+
+            ##### residual connection + layer normalization
+            output = self.layer_norm(inp + core_out)
+
+        return output,counts
+
 class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
     def __init__(
         self,
@@ -284,7 +449,9 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
         mu=0.9,
         beta1=0.9,
         beta2=0.999,
-        layerth=0
+        layerth=0,
+        cmp_size=0,
+        graph_size=0,
     ):
         activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
         super().__init__(
@@ -304,10 +471,12 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
         self.beta1 = beta1
         self.beta2 = beta2
         self.layerth = layerth
+        self.cmp_size=cmp_size
+        self.graph_size=graph_size
     def forward(self, inp, moment,att_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
-            core_out = super().forward(self.layer_norm(inp,att_weights))
+            core_out,counts = super().forward(self.layer_norm(inp,att_weights))
             core_out = self.dropout(core_out)
 
             ##### Momentum
@@ -316,14 +485,14 @@ class CausalCustomizedMoEPositionwiseFFMoM(CausalFMoETransformerMLP):
 
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,att_weights)
+            core_out,counts = super().forward(inp,att_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             ##### Momentum
             moment = self.mu * moment + self.gamma2 * core_out
             output = self.layer_norm(inp - moment)
 
-        return output, moment
+        return output, moment,counts
 
 class CustomizedMoEPositionwiseFFMoM(FMoETransformerMLP):
     def __init__(
@@ -382,6 +551,64 @@ class CustomizedMoEPositionwiseFFMoM(FMoETransformerMLP):
 
         return output, moment
 
+class CustomizedMoEPositionwiseFFMoM_out(FMoETransformerMLP_out):
+    def __init__(
+        self,
+        gate,
+        hidden_size,
+        inner_hidden_size,
+        dropout,
+        pre_lnorm=False,
+        moe_num_expert=16,
+        moe_top_k=2,
+        gamma1=1.0,
+        gamma2=1.0,
+        mu=0.9,
+        beta1=0.9,
+        beta2=0.999,
+        layerth=0
+    ):
+        activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
+        super().__init__(
+            num_expert=moe_num_expert,
+            d_model=hidden_size,
+            d_hidden=inner_hidden_size,
+            moe_top_k=moe_top_k,
+            activation=activation,
+            gate=gate,
+        )
+        self.pre_lnorm = pre_lnorm
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout)
+        self.gamma1 = gamma1
+        self.gamma2= gamma2
+        self.mu = mu
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.layerth = layerth
+
+    def forward(self, inp, moment):
+        if self.pre_lnorm:
+            ##### layer normalization + positionwise feed-forward
+            core_out,counts = super().forward(self.layer_norm(inp))
+            core_out = self.dropout(core_out)
+
+            ##### Momentum
+            moment = self.mu * moment + self.gamma2 * core_out
+            output = inp - moment
+
+        else:
+            ##### positionwise feed-forward
+            core_out,counts = super().forward(inp)
+            core_out = self.dropout(core_out)
+
+            ##### Momentum
+            moment = self.mu * moment + self.gamma2 * core_out
+            output = self.layer_norm(inp - moment)
+
+        return output, moment,counts
+
+
 
 class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
     def __init__(
@@ -398,7 +625,9 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
             mu=0.9,
             beta1=0.9,
             beta2=0.999,
-            layerth=0
+            layerth=0,
+            cmp_size=64,
+            graph_size=8,
     ):
         activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
         super().__init__(
@@ -418,11 +647,13 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
         self.beta1 = beta1
         self.beta2 = beta2
         self.layerth = layerth
+        self.cmp_size = cmp_size
+        self.graph_size = graph_size
 
     def forward(self, inp, moment,attn_weights):
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
-            core_out = super().forward(self.layer_norm(inp,attn_weights))
+            core_out,counts = super().forward(self.layer_norm(inp,attn_weights))
             core_out = self.dropout(core_out)
 
             if self.layerth < 1:
@@ -446,7 +677,7 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
 
         else:
             ##### positionwise feed-forward
-            core_out = super().forward(inp,attn_weights)
+            core_out,counts = super().forward(inp,attn_weights,self.cmp_size,self.graph_size)
             core_out = self.dropout(core_out)
 
             if self.layerth < 1:
@@ -468,7 +699,7 @@ class CausalCustomizedMoEPositionwiseFFAdam(CausalFMoETransformerMLP):
                 momentum = self.mu * moment[2] + self.gamma2 * core_out
                 output = self.layer_norm(inp - momentum)
 
-        return output, (p, v, momentum)
+        return output, (p, v, momentum),counts
 
 class CustomizedMoEPositionwiseFFAdam(FMoETransformerMLP):
     def __init__(
@@ -520,10 +751,10 @@ class CustomizedMoEPositionwiseFFAdam(FMoETransformerMLP):
                 p = self.beta1 * p + (1-self.beta1) * core_out
                 v = self.beta2 * v + (1-self.beta2) * (core_out ** 2)
                 adam = (self.gamma1 / torch.sqrt(v+1e-8)) * p + inp
-                
+
                 ##### residual connection + layer normalization
                 output = inp - adam
-            
+
             else:
                 ##### Momentum
                 p = moment[0]
@@ -544,10 +775,10 @@ class CustomizedMoEPositionwiseFFAdam(FMoETransformerMLP):
                 p = self.beta1 * p + (1-self.beta1) * core_out
                 v = self.beta2 * v + (1-self.beta2) * (core_out ** 2)
                 adam = (self.gamma1 / torch.sqrt(v+1e-8)) * p + inp
-                
+
                 ##### residual connection + layer normalization
                 output = self.layer_norm(inp - adam)
-            
+
             else:
                 ##### Momentum
                 p = moment[0]
@@ -556,6 +787,94 @@ class CustomizedMoEPositionwiseFFAdam(FMoETransformerMLP):
                 output = self.layer_norm(inp - momentum)
 
         return output, (p,v,momentum)
+
+
+class CustomizedMoEPositionwiseFFAdam_out(FMoETransformerMLP_out):
+    def __init__(
+            self,
+            gate,
+            hidden_size,
+            inner_hidden_size,
+            dropout,
+            pre_lnorm=False,
+            moe_num_expert=16,
+            moe_top_k=2,
+            gamma1=1.0,
+            gamma2=1.0,
+            mu=0.9,
+            beta1=0.9,
+            beta2=0.999,
+            layerth=0
+    ):
+        activation = nn.Sequential(nn.ReLU(), nn.Dropout(dropout))
+        super().__init__(
+            num_expert=moe_num_expert,
+            d_model=hidden_size,
+            d_hidden=inner_hidden_size,
+            moe_top_k=moe_top_k,
+            activation=activation,
+            gate=gate,
+        )
+        self.pre_lnorm = pre_lnorm
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout)
+        self.gamma1 = gamma1
+        self.gamma2 = gamma2
+        self.mu = mu
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.layerth = layerth
+
+    def forward(self, inp, moment):
+        if self.pre_lnorm:
+            ##### layer normalization + positionwise feed-forward
+            core_out,counts = super().forward(self.layer_norm(inp))
+            core_out = self.dropout(core_out)
+
+            if self.layerth < 1:
+                ##### ADAM
+                momentum = self.mu * moment[2] + self.gamma2 * core_out
+                p = moment[0]
+                v = moment[1]
+                p = self.beta1 * p + (1 - self.beta1) * core_out
+                v = self.beta2 * v + (1 - self.beta2) * (core_out ** 2)
+                adam = (self.gamma1 / torch.sqrt(v + 1e-8)) * p + inp
+
+                ##### residual connection + layer normalization
+                output = inp - adam
+
+            else:
+                ##### Momentum
+                p = moment[0]
+                v = moment[1]
+                momentum = self.mu * moment[2] + self.gamma2 * core_out
+                output = inp - momentum
+
+        else:
+            ##### positionwise feed-forward
+            core_out,counts = super().forward(inp)
+            core_out = self.dropout(core_out)
+
+            if self.layerth < 1:
+                ##### ADAM
+                momentum = self.mu * moment[2] + self.gamma2 * core_out
+                p = moment[0]
+                v = moment[1]
+                p = self.beta1 * p + (1 - self.beta1) * core_out
+                v = self.beta2 * v + (1 - self.beta2) * (core_out ** 2)
+                adam = (self.gamma1 / torch.sqrt(v + 1e-8)) * p + inp
+
+                ##### residual connection + layer normalization
+                output = self.layer_norm(inp - adam)
+
+            else:
+                ##### Momentum
+                p = moment[0]
+                v = moment[1]
+                momentum = self.mu * moment[2] + self.gamma2 * core_out
+                output = self.layer_norm(inp - momentum)
+
+        return output, (p, v, momentum),counts
 
 class CustomizedMoEPositionwiseFFOpt(FMoETransformerMLPOpt):
     def __init__(
@@ -639,6 +958,9 @@ class TransformerSeqLayer(nn.Module):
         beta1=0.9,
         beta2=0.999,
         layerth=0,
+        block_size=0,
+        cmp_size=0,
+        graph_size=0,
         **kargs,
     ):
         nn.Module.__init__(self)
@@ -650,10 +972,15 @@ class TransformerSeqLayer(nn.Module):
             gate = CustomNaiveGate_Balance_StableMoE
         else:
             print(f"{gate_name} has not been implemented yet!")
+        # if g == "d":
+        #     gate = CustomNaiveGate_Balance_SMoE_Causal
 
         self.attn = (
+            Causal_MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout,block_size=block_size, cmp_size=cmp_size,**kargs)
+            if g == "d" or g == "t" or g == "c"
+            else
             MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout, **kargs)
-            if s is "s"
+            if s == "s"
             else None
         )
         if optimal_policy:
@@ -672,7 +999,7 @@ class TransformerSeqLayer(nn.Module):
                     combine_gate=combine_gate,
                     opt_loss=opt_loss,
                 )
-                if g is "g"
+                if g == "g"
                 else None
             )
         else:
@@ -684,7 +1011,16 @@ class TransformerSeqLayer(nn.Module):
                     dropout=dropout,
                     moe_top_k=moe_top_k,
                 )
-                if g is "g"
+                if g == "g"
+                else
+                CustomizedMoEPositionwiseFF_out(
+                    gate,
+                    hidden_size=hidden_size,
+                    inner_hidden_size=inner_hidden_size,
+                    dropout=dropout,
+                    moe_top_k=moe_top_k,
+                )
+                if g == "p"
                 else
                 CausalCustomizedMoEPositionwiseFF(
                     gate,
@@ -692,10 +1028,12 @@ class TransformerSeqLayer(nn.Module):
                     inner_hidden_size=inner_hidden_size,
                     dropout=dropout,
                     moe_top_k=moe_top_k,
+                    cmp_size=cmp_size,
+                    graph_size=graph_size,
                 )
-                if g is "c"
+                if g == "c"
                 else
-                CausalCustomizedMoEPositionwiseFFMoM(
+                CustomizedMoEPositionwiseFFMoM_out(
                     gate,
                     hidden_size=hidden_size,
                     inner_hidden_size=inner_hidden_size,
@@ -708,8 +1046,8 @@ class TransformerSeqLayer(nn.Module):
                     beta2=beta2,
                     layerth=layerth,
                 )
-                if g is "k"
-                else 
+                if g == "k"
+                else
                 CustomizedMoEPositionwiseFFMoM(
                     gate,
                     hidden_size=hidden_size,
@@ -723,7 +1061,7 @@ class TransformerSeqLayer(nn.Module):
                     beta2=beta2,
                     layerth=layerth,
                 )
-                if g is "m"
+                if g == "m"
                 else
                 CausalCustomizedMoEPositionwiseFFMoM(
                     gate,
@@ -737,8 +1075,10 @@ class TransformerSeqLayer(nn.Module):
                     beta1=beta1,
                     beta2=beta2,
                     layerth=layerth,
+                    cmp_size=cmp_size,
+                    graph_size=graph_size,
                 )
-                if g is "d"
+                if g == "d"
                 else
                 CustomizedMoEPositionwiseFFAdam(
                     gate,
@@ -753,7 +1093,22 @@ class TransformerSeqLayer(nn.Module):
                     beta2=beta2,
                     layerth=layerth,
                 )
-                if g is "a"
+                if g == "a"
+                else
+                CustomizedMoEPositionwiseFFAdam_out(
+                    gate,
+                    hidden_size=hidden_size,
+                    inner_hidden_size=inner_hidden_size,
+                    dropout=dropout,
+                    moe_top_k=moe_top_k,
+                    gamma1=gamma1,
+                    gamma2=gamma2,
+                    mu=mu,
+                    beta1=beta1,
+                    beta2=beta2,
+                    layerth=layerth,
+                )
+                if g == "q"
                 else
                 CausalCustomizedMoEPositionwiseFFAdam(
                     gate,
@@ -767,8 +1122,10 @@ class TransformerSeqLayer(nn.Module):
                     beta1=beta1,
                     beta2=beta2,
                     layerth=layerth,
+                    cmp_size=cmp_size,
+                    graph_size=graph_size,
                 )
-                if g is "t"
+                if g == "t"
                 else None
             )
 
@@ -778,7 +1135,7 @@ class TransformerSeqLayer(nn.Module):
                 inner_hidden_size=inner_hidden_size,
                 dropout=dropout,
             )
-            if f is "f"
+            if f == "f"
             else None
         )
         self.norm1 = nn.LayerNorm(hidden_size)
@@ -786,34 +1143,43 @@ class TransformerSeqLayer(nn.Module):
         self.norm3 = nn.LayerNorm(hidden_size)
 
         self.use_attn = s == "s"
-        self.use_smoe = g == "g" or g == "m" or g == "a" or g == "c" or g == "k" or g == "t" or g == "d"
+        self.use_smoe = g == "g" or g == "m" or g == "a" or g == "c" or g == "t" or g == "d" or g == "k" or g == "q" or g == "p"
         self.use_ff = f == "f"
         self.g = g
 
     def forward(self, h, h_cache, moment, key_pe):
         # h = B x M x H
         # h_cache = B x L x H
-
+        counts=None
         if self.use_attn:
             h_all = torch.cat([h_cache, h], dim=1)  # B x (M+L) x H
-            attn_out,attn_weights = self.attn(h, h_all, h_all, key_pe)
+            if self.g == "d" or self.g == "t" or self.g == "c":
+                attn_out, attn_weights = self.attn(h, h_all, h_all, key_pe)
+            else :
+                attn_out= self.attn(h, h_all, h_all, key_pe)
             h = self.norm1(h + attn_out)  # B x M x H
         if self.use_smoe:
             if self.g == "m" or self.g == "a":
                 smoe_out, moment = self.smoe(h, moment)
-            elif self.g == "k" or self.g == "t":
-                smoe_out, moment = self.smoe(h, moment,attn_weights)
+            if self.g == "k" or self.g == "q":
+                smoe_out, moment,counts = self.smoe(h, moment)
+            elif self.g == "k" or self.g == "t" or self.g == "d":
+                smoe_out, moment,counts = self.smoe(h, moment,attn_weights)
             elif self.g == "g":
                 smoe_out = self.smoe(h)
+            elif self.g == "p":
+                smoe_out,counts = self.smoe(h)
             elif self.g == "c" :
-                smoe_out = self.smoe(h,attn_weights)
-            elif self.g == "d" :
-                smoe_out, moment = self.smoe(h, moment,attn_weights)
+                smoe_out,counts = self.smoe(h,attn_weights)
             h = self.norm2(h + smoe_out)  # B x M x H
         if self.use_ff:
             ff_out = self.ff(h)
             h = self.norm3(h + ff_out)  # B x M x H
-        return h, moment
+        if counts is None:
+            return h, moment
+        else:
+            return h, moment,counts
+
 
 class CausalMoE(nn.Module):
     def __init__(
@@ -842,6 +1208,9 @@ class CausalMoE(nn.Module):
         mu,
         beta1,
         beta2,
+        block_size,
+        cmp_size,
+        graph_size,
         **kargs,
     ):
         nn.Module.__init__(self)
@@ -883,6 +1252,9 @@ class CausalMoE(nn.Module):
                     beta1=beta1,
                     beta2=beta2,
                     layerth=i,
+                    block_size=block_size,
+                    cmp_size=cmp_size,
+                    graph_size=graph_size,
                     **kargs,
                 )
                 for i in range(nb_layers)
@@ -916,6 +1288,9 @@ class CausalMoE(nn.Module):
                             beta1=beta1,
                             beta2=beta2,
                             layerth=i,
+                            block_size=block_size,
+                            cmp_size=cmp_size,
+                            graph_size=graph_size,
                             **kargs,
                         ),
                         TransformerSeqLayer(
@@ -943,6 +1318,9 @@ class CausalMoE(nn.Module):
                             beta1=beta1,
                             beta2=beta2,
                             layerth=i,
+                            block_size=block_size,
+                            cmp_size=cmp_size,
+                            graph_size=graph_size,
                             **kargs,
                         ),
                     ]
@@ -962,7 +1340,11 @@ class CausalMoE(nn.Module):
             moment = (torch.zeros_like(h),torch.zeros_like(h),torch.zeros_like(h))
         else:
             moment = torch.zeros_like(h)
+        counts_out = 1
+        if 'f' in self.arch:
+            counts_out = 2
         for l, layer in enumerate(self.layers):
+            is_last_layer = (l == len(self.layers) - counts_out)  # 判断是否是最后一层
             if layer.use_attn:
                 cache_size = layer.attn.attn.get_cache_size()
                 if cache_size > block_size:
@@ -972,9 +1354,12 @@ class CausalMoE(nn.Module):
                 else:
                     h_cache_next_l = h[:, -cache_size:, :].detach()
                 h_cache_next.append(h_cache_next_l)
-                h, moment = layer(h, h_cache[l], moment, self.key_pe)  # B x M x H
+                if is_last_layer:
+                    h, moment,counts = layer(h, h_cache[l], moment, self.key_pe)
+                else:
+                    h, moment = layer(h, h_cache[l], moment, self.key_pe)  # B x M x H
             else:
                 h = layer(h, [], self.key_pe)
 
         out = F.log_softmax(self.out_emb(h), dim=-1)
-        return out, h_cache_next
+        return out, h_cache_next,counts

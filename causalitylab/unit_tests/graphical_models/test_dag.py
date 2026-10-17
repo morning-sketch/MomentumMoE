@@ -67,7 +67,3 @@ class TestDAG(TestCase):
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]])
         self.assertFalse(np.any(adj_true != adj))
-
-
-
-

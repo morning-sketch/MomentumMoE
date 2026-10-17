@@ -335,10 +335,10 @@ class CustomizedMoEPositionwiseFFAdam(FMoETransformerMLP):
                 p = self.beta1 * p + (1-self.beta1) * core_out
                 v = self.beta2 * v + (1-self.beta2) * (core_out ** 2)
                 adam = (self.gamma1 / torch.sqrt(v+1e-8)) * p + inp
-                
+
                 ##### residual connection + layer normalization
                 output = inp - adam
-            
+
             else:
                 ##### Momentum
                 p = moment[0]
@@ -359,10 +359,10 @@ class CustomizedMoEPositionwiseFFAdam(FMoETransformerMLP):
                 p = self.beta1 * p + (1-self.beta1) * core_out
                 v = self.beta2 * v + (1-self.beta2) * (core_out ** 2)
                 adam = (self.gamma1 / torch.sqrt(v+1e-8)) * p + inp
-                
+
                 ##### residual connection + layer normalization
                 output = self.layer_norm(inp - adam)
-            
+
             else:
                 ##### Momentum
                 p = moment[0]
@@ -468,7 +468,7 @@ class TransformerSeqLayer(nn.Module):
 
         self.attn = (
             MultiHeadSeqAttention(hidden_size=hidden_size, dropout=dropout, **kargs)
-            if s is "s"
+            if s == "s"
             else None
         )
         if optimal_policy:
@@ -487,7 +487,7 @@ class TransformerSeqLayer(nn.Module):
                     combine_gate=combine_gate,
                     opt_loss=opt_loss,
                 )
-                if g is "g"
+                if g == "g"
                 else None
             )
         else:
@@ -499,8 +499,8 @@ class TransformerSeqLayer(nn.Module):
                     dropout=dropout,
                     moe_top_k=moe_top_k,
                 )
-                if g is "g"
-                else 
+                if g == "g"
+                else
                 CustomizedMoEPositionwiseFFMoM(
                     gate,
                     hidden_size=hidden_size,
@@ -514,8 +514,8 @@ class TransformerSeqLayer(nn.Module):
                     beta2=beta2,
                     layerth=layerth,
                 )
-                if g is "m"
-                else 
+                if g == "m"
+                else
                 CustomizedMoEPositionwiseFFAdam(
                     gate,
                     hidden_size=hidden_size,
@@ -529,7 +529,7 @@ class TransformerSeqLayer(nn.Module):
                     beta2=beta2,
                     layerth=layerth,
                 )
-                if g is "a"
+                if g == "a"
                 else None
             )
 
@@ -539,7 +539,7 @@ class TransformerSeqLayer(nn.Module):
                 inner_hidden_size=inner_hidden_size,
                 dropout=dropout,
             )
-            if f is "f"
+            if f == "f"
             else None
         )
         self.norm1 = nn.LayerNorm(hidden_size)

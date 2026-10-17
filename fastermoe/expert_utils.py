@@ -3,7 +3,7 @@ import torch
 
 def get_expert_param_size(e):
     return sum(map(lambda x: x.numel(), e.parameters()))
-    
+
 
 def get_expert_params(e, out):
     offset = 0
