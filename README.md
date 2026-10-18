@@ -3,6 +3,9 @@
 This repository is the cleaned implementation of the first work in the thesis:
 **Causal-aware Adaptive Routing Mechanism for Mixture of Experts (CausalMoE)**.
 
+Detailed notes for the first work (method, code map, experiment protocol, known
+issues and thesis-writing caveats): [docs/FIRST_WORK.md](docs/FIRST_WORK.md).
+
 It covers the paper's four experiment lines:
 
 1. Language-model pretraining/evaluation on WikiText-103, WikiText-2, and PTB.
